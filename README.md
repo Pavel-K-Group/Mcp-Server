@@ -1,6 +1,6 @@
-# GitHub MCP Server
+# Telegram MCP Server
 
-Этот MCP сервер предоставляет инструменты для работы с GitHub API через Claude Desktop.
+Этот MCP сервер предоставляет инструменты для отправки сообщений в Telegram через Claude Desktop.
 
 ## Установка и настройка
 
@@ -10,16 +10,28 @@
 npm install
 ```
 
-### 2. Настройка GitHub токена
+### 2. Настройка Telegram бота
 
 Создайте файл `.env` в корне проекта:
 
 ```
-GITHUB_TOKEN=your_github_token_here
+TELEGRAM_BOT_TOKEN=your_bot_token_here
+TELEGRAM_CHAT_ID=your_chat_id_here
 ```
 
-Получить токен можно в GitHub Settings > Developer settings > Personal access tokens.
-Необходимые права: `repo`, `issues`, `pull_requests`.
+#### Получение токена бота:
+
+1. Найдите бота @BotFather в Telegram
+2. Отправьте команду `/newbot`
+3. Следуйте инструкциям для создания бота
+4. Скопируйте полученный токен
+
+#### Получение Chat ID:
+
+1. Запустите вашего бота
+2. Отправьте ему любое сообщение
+3. Перейдите по ссылке: `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates`
+4. Найдите значение `chat.id` в ответе
 
 ### 3. Сборка проекта
 
@@ -49,28 +61,8 @@ pnpm run dev
 ```json
 {
     "mcpServers": {
-        "GitHub": {
+        "Telegram": {
             "url": "http://localhost:8080/sse"
-        }
-    }
-}
-```
-
-**Важно**: Убедитесь что ваш MCP клиент поддерживает полный SSE протокол с POST сообщениями. Если клиент ожидает только SSE, возможно потребуется использовать прокси, например:
-
-```json
-{
-    "mcpServers": {
-        "GitHub": {
-            "command": "npx",
-            "args": [
-                "mcp-proxy",
-                "--port",
-                "8081",
-                "--shell",
-                "node",
-                "D:\\push-f\\_Ai\\MCP Server\\dist\\main.js"
-            ]
         }
     }
 }
@@ -82,33 +74,21 @@ pnpm run dev
 
 ## Доступные инструменты
 
-Сервер предоставляет следующие инструменты для работы с GitHub:
+Сервер предоставляет следующий инструмент для работы с Telegram:
 
-### Issues
+### Сообщения
 
--   `getIssue` - получить информацию об issue
--   `updateIssue` - обновить issue
--   `listIssues` - список issues репозитория
+-   `sendTelegramMessage` - отправить сообщение в Telegram
 
-### Pull Requests
+## Использование
 
--   `getPullRequest` - получить информацию о PR
--   `updatePullRequest` - обновить PR
--   `listPullRequests` - список PR репозитория
+После настройки вы можете попросить Claude отправить сообщения в Telegram:
 
-### Comments
+```
+Отправь сообщение "Привет!" в Telegram
+```
 
--   `addComment` - добавить комментарий к issue/PR
--   `listComments` - список комментариев
-
-### GitHub Actions
-
--   `listWorkflowRuns` - список запусков workflow
--   `getWorkflowRun` - информация о конкретном запуске
--   `getWorkflowRunDetails` - детальная информация о запуске
--   `cancelWorkflowRun` - отменить запуск
--   `rerunWorkflowRun` - перезапустить workflow
--   `rerunFailedJobs` - перезапустить только неудачные jobs
+Claude будет использовать инструмент `sendTelegramMessage` для отправки сообщения в указанный чат.
 
 ## Разработка
 

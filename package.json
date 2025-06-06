@@ -26,7 +26,7 @@
         "typescript": "^5.8.0"
     },
     "engines": {
-        "node": ">=18"
+        "node": ">=20"
     },
     "keywords": [
         "mcp",

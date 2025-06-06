@@ -1,0 +1,71 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Важные файлы проекта MCP Server
+
+## Основные файлы конфигурации
+- `package.json` - Конфигурация npm пакета и скрипты
+- `tsconfig.json` - Конфигурация TypeScript компилятора
+- `.gitignore` - Файлы для игнорирования в git
+- `.env` - Переменные окружения (включая GITHUB_TOKEN)
+
+## Исходный код
+- `src/main.ts` - Точка входа в приложение, регистрация всех MCP инструментов
+
+### GitHub Functions (Модули для работы с GitHub API)
+- `src/github-functions/issues.ts` - Функции для работы с issues (getIssue, updateIssue, listIssues)
+- `src/github-functions/pull-requests.ts` - Функции для работы с pull requests (getPullRequest, updatePullRequest, listPullRequests)
+- `src/github-functions/comments.ts` - Функции для работы с комментариями (createIssueComment, createPullRequestComment)
+- `src/github-functions/actions.ts` - Функции для работы с GitHub Actions (listWorkflowRuns, getWorkflowRun, getWorkflowRunDetails, cancelWorkflowRun, rerunWorkflowRun, rerunFailedJobs)
+
+## Собранные файлы
+- `dist/main.js` - Скомпилированный основной файл
+- `dist/main.d.ts` - TypeScript definitions
+- `dist/main.js.map` - Source map для отладки
+
+## Структура проекта
+```
+MCP Server/
+├── .cursor/rules/important-files.mdc
+├── package.json
+├── pnpm-lock.yaml
+├── tsconfig.json
+├── .gitignore
+├── .env
+├── src/
+│   ├── main.ts
+│   └── github-functions/
+│       ├── issues.ts
+│       ├── pull-requests.ts
+│       ├── comments.ts
+│       └── actions.ts
+├── dist/
+│   ├── main.js
+│   ├── main.d.ts
+│   └── main.js.map
+└── node_modules/ (установленные зависимости)
+```
+
+## Архитектура
+Проект использует модульную структуру:
+
+1. **GitHub Functions** (`src/github-functions/`) - Низкоуровневые функции для взаимодействия с GitHub API через Octokit, разделенные по доменам
+2. **Main Server** (`src/main.ts`) - Основной файл сервера, который импортирует GitHub Functions и регистрирует MCP инструменты
+
+Каждый домен (issues, pull-requests, comments, actions) имеет свой файл с соответствующими функциями в папке `github-functions`.
+
+**Примечание**: При добавлении новых важных файлов в проект, обязательно обновите этот файл important-files.mdc, добавив их в соответствующие разделы.
+
+
+
+
+
+
+
+
+
+
+
+

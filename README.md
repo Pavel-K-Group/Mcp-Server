@@ -33,23 +33,37 @@ TELEGRAM_CHAT_ID=your_chat_id_here
 3. Перейдите по ссылке: `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates`
 4. Найдите значение `chat.id` в ответе
 
-### 3. Сборка проекта
+## Запуск сервера
+
+### Вариант 1: Разработка (рекомендуется)
+
+```bash
+npm run dev
+```
+
+### Вариант 2: Production сборка
 
 ```bash
 npm run build
+npm start
 ```
 
-### 4. Запуск сервера
-
-Запустите MCP сервер:
+### Вариант 3: Docker Compose
 
 ```bash
-pnpm run dev
+# Сборка и запуск
+docker-compose up --build
+
+# Запуск в фоне
+docker-compose up -d
+
+# Остановка
+docker-compose down
 ```
 
 Сервер запустится на `http://localhost:8080` с SSE endpoint на `/sse`.
 
-### 5. Настройка Claude Desktop
+## Настройка Claude Desktop
 
 Отредактируйте файл конфигурации Claude Desktop:
 
@@ -67,8 +81,6 @@ pnpm run dev
     }
 }
 ```
-
-### 6. Перезапуск Claude Desktop
 
 После изменения конфигурации перезапустите Claude Desktop.
 
@@ -90,12 +102,26 @@ pnpm run dev
 
 Claude будет использовать инструмент `sendTelegramMessage` для отправки сообщения в указанный чат.
 
-## Разработка
+## Структура проекта
 
-Для разработки используйте:
-
-```bash
-npm run dev
+```
+Telegram-Mcp-Server/
+├── src/
+│   ├── telegram-functions/
+│   │   └── messages.ts          # Функции для работы с Telegram API
+│   └── main.ts                  # Главный файл сервера
+├── dist/                        # Скомпилированные файлы
+├── docker-compose.yml           # Docker Compose конфигурация
+├── Dockerfile                   # Docker образ
+├── .env                         # Переменные окружения (создать самостоятельно)
+├── .env.example                 # Пример файла переменных окружения
+└── README.md                    # Документация
 ```
 
-Это запустит сервер с автоматической перезагрузкой при изменении файлов.
+## Технические особенности
+
+- Использует ES modules (type: "module" в package.json)
+- TypeScript с компиляцией в ES2020
+- Express.js для HTTP сервера
+- Server-Sent Events (SSE) для MCP протокола
+- Автоматическая загрузка переменных окружения через dotenv

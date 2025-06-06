@@ -1,4 +1,8 @@
-import 'dotenv/config'
+// Загружаем переменные окружения только если не production
+if (process.env.NODE_ENV !== 'production') {
+    import('dotenv/config')
+}
+
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
 import { z } from 'zod'

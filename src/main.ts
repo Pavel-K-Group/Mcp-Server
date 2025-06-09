@@ -35,7 +35,7 @@ async function registerAllTools() {
 
 // Создаем Express приложение
 const app = express()
-const PORT = 8080
+const PORT = Number(process.env.PORT) || 8080
 
 // Настраиваем CORS
 app.use(
@@ -111,10 +111,12 @@ app.post('/message', async (req, res) => {
 async function startServer() {
     await registerAllTools()
     
-    app.listen(PORT, () => {
-        console.log(`🚀 Universal MCP Server запущен на http://localhost:${PORT}`)
-        console.log(`📡 SSE endpoint доступен на http://localhost:${PORT}/sse`)
-        console.log(`🔧 Настройте ваш MCP клиент на: http://localhost:${PORT}/sse`)
+    const HOST = process.env.NODE_ENV === 'production' ? '0.0.0.0' : 'localhost'
+    
+    app.listen(PORT, HOST, () => {
+        console.log(`🚀 Universal MCP Server запущен на http://${HOST}:${PORT}`)
+        console.log(`📡 SSE endpoint доступен на http://${HOST}:${PORT}/sse`)
+        console.log(`🔧 Настройте ваш MCP клиент на: http://${HOST}:${PORT}/sse`)
     })
 }
 

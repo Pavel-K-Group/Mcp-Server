@@ -19,11 +19,12 @@ RUN npm run build
 # Устанавливаем только production зависимости
 RUN npm ci --only=production && npm cache clean --force
 
-# Открываем порт
-EXPOSE 8080
+# Открываем порт (по умолчанию 8080, но может быть переопределен)
+EXPOSE ${PORT:-8080}
 
-# Устанавливаем переменную окружения
+# Устанавливаем переменные окружения
 ENV NODE_ENV=production
+ENV PORT=${PORT:-8080}
 
 # Команда запуска
 CMD ["npm", "start"] 

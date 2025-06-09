@@ -5,48 +5,33 @@ if (process.env.NODE_ENV !== 'production') {
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
-import { z } from 'zod'
 import express from 'express'
 import cors from 'cors'
-
-// Импортируем Telegram функции
-import * as telegramApi from './telegram-functions/messages.js'
+import { loadAllTools } from './utils/tool-loader.js'
 
 // Create an MCP server
 const server = new McpServer({
-    name: 'Telegram MCP Server',
+    name: 'Universal MCP Server',
     version: '1.0.0',
 })
 
-// Отправить сообщение в Telegram
-server.tool(
-    'sendTelegramMessage',
-    'Отправить сообщение в Telegram',
-    {
-        text: z.string().describe('Текст сообщения для отправки'),
-    },
-    async ({ text }) => {
-        try {
-            const result = await telegramApi.sendMessage(text)
-            return {
-                content: [
-                    { type: 'text' as const, text: JSON.stringify(result, null, 2) },
-                ],
-            }
-        } catch (error) {
-            return {
-                content: [
-                    {
-                        type: 'text' as const,
-                        text: `Ошибка: ${
-                            error instanceof Error ? error.message : String(error)
-                        }`,
-                    },
-                ],
-            }
-        }
-    },
-)
+// Автоматически загружаем и регистрируем все инструменты
+async function registerAllTools() {
+    console.log('🔧 Загружаем инструменты...')
+    const tools = await loadAllTools()
+    
+    for (const tool of tools) {
+        server.tool(
+            tool.name,
+            tool.description,
+            tool.inputSchema,
+            tool.handler
+        )
+        console.log(`📋 Зарегистрирован инструмент: ${tool.name}`)
+    }
+    
+    console.log(`✅ Загружено ${tools.length} инструментов`)
+}
 
 // Создаем Express приложение
 const app = express()
@@ -64,7 +49,7 @@ app.use(
 // Обслуживаем главную страницу
 app.get('/', (req, res) => {
     res.json({
-        name: 'Telegram MCP Server',
+        name: 'Universal MCP Server',
         version: '1.0.0',
         status: 'running',
         endpoints: {
@@ -101,7 +86,7 @@ app.get('/sse', async (req, res) => {
 
 // POST endpoint для обработки сообщений от клиента
 app.post('/message', async (req, res) => {
-    console.log('Получено POST сообщение:', req.body)
+    console.log('🔄 MCP протокол: получен запрос от клиента')
 
     try {
         // Ищем любой активный транспорт для обработки сообщения
@@ -115,16 +100,22 @@ app.post('/message', async (req, res) => {
 
         // Обрабатываем POST сообщение через активный транспорт
         await activeTransport.handlePostMessage(req, res)
-        console.log('✅ POST сообщение обработано')
+        console.log('✅ MCP протокол: запрос обработан')
     } catch (error) {
-        console.error('❌ Ошибка обработки POST сообщения:', error)
+        console.error('❌ Ошибка обработки MCP запроса:', error)
         res.status(500).json({ error: 'Failed to handle POST message' })
     }
 })
 
-// Запускаем сервер
-app.listen(PORT, () => {
-    console.log(`🚀 Telegram MCP Server запущен на http://localhost:${PORT}`)
-    console.log(`📡 SSE endpoint доступен на http://localhost:${PORT}/sse`)
-    console.log(`🔧 Настройте ваш MCP клиент на: http://localhost:${PORT}/sse`)
-})
+// Инициализируем сервер
+async function startServer() {
+    await registerAllTools()
+    
+    app.listen(PORT, () => {
+        console.log(`🚀 Universal MCP Server запущен на http://localhost:${PORT}`)
+        console.log(`📡 SSE endpoint доступен на http://localhost:${PORT}/sse`)
+        console.log(`🔧 Настройте ваш MCP клиент на: http://localhost:${PORT}/sse`)
+    })
+}
+
+startServer().catch(console.error)

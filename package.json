@@ -1,7 +1,7 @@
 {
-    "name": "mcp-server",
+    "name": "universal-mcp-server",
     "version": "1.0.0",
-    "description": "MCP Server написанный на TypeScript",
+    "description": "Universal MCP Server с модульной архитектурой плагинов",
     "type": "module",
     "bin": "dist/main.js",
     "scripts": {
@@ -31,8 +31,12 @@
     "keywords": [
         "mcp",
         "server",
-        "typescript"
+        "typescript",
+        "universal",
+        "plugins",
+        "modular",
+        "tools"
     ],
-    "author": "",
+    "author": "Pavel",
     "license": "MIT"
 }

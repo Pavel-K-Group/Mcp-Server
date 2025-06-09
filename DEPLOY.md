@@ -3,14 +3,18 @@
 ## Локальный запуск
 
 ```bash
-# Через Docker Compose
-docker-compose up --build
+# Через Docker Compose (локальная разработка)
+docker-compose -f docker-compose.local.yml up --build
 
-# Или локально
+# Или локально через Node.js
 npm install
 npm run build
 npm start
 ```
+
+**Файлы конфигурации:**
+- `docker-compose.yml` - для production деплоя (без экспоза портов)
+- `docker-compose.local.yml` - для локальной разработки (с портом 8080)
 
 ## Деплой на Coolify
 
@@ -20,8 +24,11 @@ npm start
 
 ```
 NODE_ENV=production
-PORT=8080
 ```
+
+⚠️ **Важно**: 
+- НЕ устанавливайте переменную `PORT` в Coolify
+- НЕ нужно экспозить порты в docker-compose - Coolify использует reverse proxy
 
 Если используются дополнительные сервисы, добавьте:
 
@@ -40,13 +47,23 @@ TELEGRAM_CHAT_ID=your_chat_id_here
 2. Подключите Git репозиторий
 3. Выберите `Docker Compose` как метод сборки
 4. Установите переменные окружения (указанные выше)
-5. Убедитесь, что порт установлен как `8080` (или используйте переменную PORT)
+5. Coolify автоматически настроит reverse proxy и HTTPS
 6. Деплойте приложение
 
-### 3. Проверка работы
+### 3. Решение проблем
+
+#### Ошибка "port is already allocated"
+Эта ошибка больше не должна возникать, так как мы убрали expose портов из docker-compose.yml.
+
+Coolify использует:
+- **Внутреннюю сеть** контейнеров
+- **Reverse proxy** для маршрутизации
+- **Автоматический SSL/TLS**
+
+#### Проверка работы
 
 После деплоя проверьте:
-- `GET /` - информация о сервере
+- `GET /` - информация о сервере  
 - `GET /sse` - SSE endpoint для MCP клиентов
 - Health check должен показывать статус "healthy"
 
@@ -64,11 +81,12 @@ https://your-domain.com/sse
 - `docker-compose.yml` - конфигурация для Docker Compose
 - `Dockerfile` - инструкции для сборки Docker образа
 
-## Порты
+## Порты и сеть
 
-- По умолчанию: `8080`
-- Настраиваемый через переменную `PORT`
-- В Coolify убедитесь, что используется правильный порт
+- **Внутренний порт контейнера**: `8080` (только внутри Docker сети)
+- **Внешний доступ**: через reverse proxy Coolify
+- **Локально**: используется порт `8080` (экспозится для разработки)
+- **Production**: порты НЕ экспозятся, всё через reverse proxy
 
 ## Логи
 

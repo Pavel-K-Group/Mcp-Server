@@ -111,7 +111,8 @@ app.post('/message', async (req, res) => {
 async function startServer() {
     await registerAllTools()
     
-    const HOST = process.env.NODE_ENV === 'production' ? '0.0.0.0' : 'localhost'
+    // В Docker контейнере всегда используем 0.0.0.0, иначе localhost
+    const HOST = process.env.DOCKER_ENV === 'true' || process.env.NODE_ENV === 'production' ? '0.0.0.0' : 'localhost'
     
     app.listen(PORT, HOST, () => {
         console.log(`🚀 Universal MCP Server запущен на http://${HOST}:${PORT}`)

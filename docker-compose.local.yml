@@ -8,6 +8,7 @@ services:
         environment:
             - NODE_ENV=development
             - PORT=8080
+            - DOCKER_ENV=true
         env_file:
             - .env
         restart: unless-stopped
@@ -15,10 +16,8 @@ services:
             test:
                 [
                     'CMD',
-                    'wget',
-                    '--no-verbose',
-                    '--tries=1',
-                    '--spider',
+                    'curl',
+                    '-f',
                     'http://localhost:8080',
                 ]
             interval: 30s

@@ -10,11 +10,20 @@ const inputSchema = {
 // Экспортируем определение инструмента
 export const toolDefinition: ToolDefinition = {
     name: 'executeSQL',
-    description: 'Выполнить SQL запрос к базе данных',
-    inputSchema: inputSchema,
+    config: {
+        title: 'SQL Database Executor',
+        description: 'Выполнение SQL запросов к базе данных SQLite',
+        inputSchema: {
+            query: z.string().describe('SQL запрос для выполнения'),
+            database: z.string().optional().default('main').describe('Имя базы данных (по умолчанию main)')
+        },
+    },
     handler: async (input: unknown) => {
         try {
-            const parsed = z.object(inputSchema).parse(input)
+            const parsed = z.object({
+                query: z.string(),
+                database: z.string().optional().default('main')
+            }).parse(input)
             const database = parsed.database || 'main'
             
             // Здесь была бы реальная логика работы с БД
@@ -36,7 +45,7 @@ export const toolDefinition: ToolDefinition = {
                 content: [
                     {
                         type: 'text' as const,
-                        text: `Ошибка выполнения SQL: ${
+                        text: `Ошибка SQL запроса: ${
                             error instanceof Error ? error.message : String(error)
                         }`,
                     },

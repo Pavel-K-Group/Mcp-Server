@@ -55,8 +55,11 @@ const inputSchema = {
 // Экспортируем определение инструмента
 export const toolDefinition: ToolDefinition = {
     name: 'sendTelegramMessage',
-    description: 'Отправить сообщение в Telegram',
-    inputSchema: inputSchema,
+    config: {
+        title: 'Telegram Message Sender',
+        description: 'Отправить сообщение в Telegram',
+        inputSchema: inputSchema,
+    },
     handler: async (input: unknown) => {
         try {
             const parsed = z.object(inputSchema).parse(input)

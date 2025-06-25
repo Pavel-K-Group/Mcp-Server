@@ -4,16 +4,19 @@ import type { ToolDefinition } from '../types/tool.js'
 // Схема для валидации входных данных
 const inputSchema = {
     url: z.string().url().describe('URL для запроса'),
-    method: z.enum(['GET', 'POST', 'PUT', 'DELETE']).default('GET').describe('HTTP метод'),
+    method: z.enum(['GET', 'POST', 'PUT', 'DELETE']).optional().default('GET').describe('HTTP метод'),
     headers: z.record(z.string()).optional().describe('HTTP заголовки'),
-    body: z.string().optional().describe('Тело запроса (для POST/PUT)'),
+    body: z.string().optional().describe('Тело запроса (для POST/PUT)')
 }
 
 // Экспортируем определение инструмента
 export const toolDefinition: ToolDefinition = {
     name: 'httpRequest',
-    description: 'Выполнить HTTP запрос к внешнему API',
-    inputSchema: inputSchema,
+    config: {
+        title: 'HTTP Request Client',
+        description: 'Выполнение HTTP запросов к внешним API',
+        inputSchema: inputSchema,
+    },
     handler: async (input: unknown) => {
         try {
             const parsed = z.object(inputSchema).parse(input)

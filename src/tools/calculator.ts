@@ -46,9 +46,12 @@ function safeEvaluate(expression: string): number {
 
 export const toolDefinition: ToolDefinition = {
     name: 'calculator',
-    description: 'Выполняет математические вычисления. Поддерживает основные операции (+, -, *, /, %, **), функции (sqrt, abs, sin, cos, tan, log, ln) и константы (π, e)',
-    inputSchema: {
-        expression: z.string().describe('Математическое выражение для вычисления (например: "2 + 2", "sqrt(16)", "sin(π/2)")')
+    config: {
+        title: 'Mathematical Calculator',
+        description: 'Выполняет математические вычисления. Поддерживает основные операции (+, -, *, /, %, **), функции (sqrt, abs, sin, cos, tan, log, ln) и константы (π, e)',
+        inputSchema: {
+            expression: z.string().describe('Математическое выражение для вычисления (например: "2 + 2", "sqrt(16)", "sin(π/2)")')
+        },
     },
     handler: async (input) => {
         try {

@@ -1,16 +1,17 @@
 services:
     universal-mcp-server:
-        image: your-username/telegram-mcp-server:latest
+        build: 
+            context: .
+            no_cache: true
+        ports:
+            - '8080:8080'  # Только для локальной разработки!
         environment:
-            - NODE_ENV=production
+            - NODE_ENV=development
             - PORT=8080
             - DOCKER_ENV=true
         env_file:
             - .env
         restart: unless-stopped
-        labels:
-            - "coolify.managed=true"
-            - "coolify.name=telegram-mcp-server"
         healthcheck:
             test:
                 [

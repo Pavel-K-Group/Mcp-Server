@@ -12,6 +12,9 @@ services:
         env_file:
             - .env
         restart: unless-stopped
+        labels:
+            - "coolify.managed=true"
+            - "coolify.name=telegram-mcp-server"
         healthcheck:
             test:
                 [

@@ -8,6 +8,7 @@ import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
 import express from 'express'
 import cors from 'cors'
 import { loadAllTools } from './utils/tool-loader.js'
+import { testConnection } from './database/client.js'
 
 // Create an MCP server
 const server = new McpServer({
@@ -19,17 +20,12 @@ const server = new McpServer({
 async function registerAllTools() {
     console.log('🔧 Загружаем инструменты...')
     const tools = await loadAllTools()
-    
+
     for (const tool of tools) {
-        server.tool(
-            tool.name,
-            tool.description,
-            tool.inputSchema,
-            tool.handler
-        )
+        server.tool(tool.name, tool.description, tool.inputSchema, tool.handler)
         console.log(`📋 Зарегистрирован инструмент: ${tool.name}`)
     }
-    
+
     console.log(`✅ Загружено ${tools.length} инструментов`)
 }
 
@@ -109,15 +105,31 @@ app.post('/message', async (req, res) => {
 
 // Инициализируем сервер
 async function startServer() {
+    // Проверяем подключение к базе данных
+    console.log('🔄 Проверяем подключение к базе данных...')
+    const dbConnected = await testConnection()
+
+    if (!dbConnected) {
+        console.warn(
+            '⚠️  База данных недоступна, но сервер продолжит работу без БД инструментов',
+        )
+    }
+
     await registerAllTools()
-    
+
     // В Docker контейнере всегда используем 0.0.0.0, иначе localhost
-    const HOST = process.env.DOCKER_ENV === 'true' || process.env.NODE_ENV === 'production' ? '0.0.0.0' : 'localhost'
-    
+    const HOST =
+        process.env.DOCKER_ENV === 'true' || process.env.NODE_ENV === 'production'
+            ? '0.0.0.0'
+            : 'localhost'
+
     app.listen(PORT, HOST, () => {
         console.log(`🚀 Universal MCP Server запущен на http://${HOST}:${PORT}`)
         console.log(`📡 SSE endpoint доступен на http://${HOST}:${PORT}/sse`)
         console.log(`🔧 Настройте ваш MCP клиент на: http://${HOST}:${PORT}/sse`)
+        if (dbConnected) {
+            console.log(`💾 База данных подключена и готова к работе`)
+        }
     })
 }
 

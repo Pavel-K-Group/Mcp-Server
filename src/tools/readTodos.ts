@@ -9,8 +9,10 @@ import type { TodoSearchInput } from '../types/todo.js'
  * Инструмент для чтения тудушек
  */
 async function readTodos(input: TodoSearchInput) {
-    // Захардкодим userId для демонстрации
+    // Захардкодим userId своего аккаунта на dev supabase cloud
     const userId = 'htN0Vg2p7OA70Hx3sg0R21DDnHZl7ndT'
+    // Захардкодим parentId нашего INBOX (тот же, что в createTodo.ts)
+    const parentId = 'e130ec09-d4bf-40de-9d54-137a572527ac'
 
     try {
         if (input.todoId) {
@@ -23,6 +25,7 @@ async function readTodos(input: TodoSearchInput) {
                         eq(block.id, input.todoId),
                         eq(block.userId, userId),
                         eq(block.type, 'todo'),
+                        eq(block.parentId, parentId),
                         isNull(block.deletedAt),
                     ),
                 )
@@ -67,6 +70,7 @@ async function readTodos(input: TodoSearchInput) {
                     and(
                         eq(block.userId, userId),
                         eq(block.type, 'todo'),
+                        eq(block.parentId, parentId),
                         isNull(block.deletedAt),
                     ),
                 )
@@ -112,6 +116,7 @@ async function readTodos(input: TodoSearchInput) {
                     and(
                         eq(block.userId, userId),
                         eq(block.type, 'todo'),
+                        eq(block.parentId, parentId),
                         ilike(block.title || '', `%${input.titleSearch}%`),
                         isNull(block.deletedAt),
                     ),
@@ -148,6 +153,49 @@ async function readTodos(input: TodoSearchInput) {
                 },
                 message: `Задача найдена по поиску "${input.titleSearch}": ${todo.title}`,
             }
+        } else if (input.limit) {
+            // Получить ограниченное количество задач (последние по дате создания)
+            const limitedTodos = await db
+                .select()
+                .from(block)
+                .where(
+                    and(
+                        eq(block.userId, userId),
+                        eq(block.type, 'todo'),
+                        eq(block.parentId, parentId),
+                        isNull(block.deletedAt),
+                    ),
+                )
+                .orderBy(desc(block.createdAt))
+                .limit(input.limit)
+
+            // Добавляем позицию для удобства
+            const numberedTodos = limitedTodos.map((todo, index) => {
+                const content = (todo.content as any) || {}
+                return {
+                    id: todo.id,
+                    title: todo.title,
+                    description: content.description || '',
+                    completed: content.completed || false,
+                    priority: content.priority || 'low',
+                    dueDate: content.dueDate || null,
+                    tags: todo.tags || [],
+                    projectId: content.projectId || null,
+                    createdAt: todo.createdAt,
+                    updatedAt: todo.updatedAt,
+                    position: index + 1,
+                }
+            })
+
+            return {
+                success: true,
+                operation: 'read',
+                data: {
+                    todos: numberedTodos,
+                    count: numberedTodos.length,
+                },
+                message: `Найдено ${numberedTodos.length} последних задач`,
+            }
         } else {
             // Получить пронумерованный список всех тудушек
             const userTodos = await db
@@ -157,6 +205,7 @@ async function readTodos(input: TodoSearchInput) {
                     and(
                         eq(block.userId, userId),
                         eq(block.type, 'todo'),
+                        eq(block.parentId, parentId),
                         isNull(block.deletedAt),
                     ),
                 )
@@ -204,13 +253,19 @@ const inputSchema = {
     todoId: z.string().optional().describe('Точный ID задачи (если известен)'),
     position: z.number().optional().describe('Номер задачи в списке (1, 2, 3...)'),
     titleSearch: z.string().optional().describe('Поиск по части названия задачи'),
+    limit: z
+        .number()
+        .min(1)
+        .max(100)
+        .optional()
+        .describe('Количество задач для получения (1-100, например 10 последних)'),
 }
 
 // Экспортируем определение инструмента
 export const toolDefinition: ToolDefinition = {
     name: 'readTodos',
     description:
-        'Получить список задач пользователя. Можно найти по ID, позиции в списке, поиску по названию или получить все задачи.',
+        'Получить список задач пользователя. Можно найти по ID, позиции в списке, поиску по названию, ограничить количество (например, 10 последних) или получить все задачи.',
     inputSchema: inputSchema,
     handler: async (input: unknown) => {
         try {

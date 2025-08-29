@@ -40,4 +40,5 @@ export interface TodoSearchInput {
     todoId?: string
     position?: number
     titleSearch?: string
+    limit?: number
 }

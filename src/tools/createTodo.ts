@@ -9,6 +9,7 @@ import { eq, and, isNull, desc, asc } from 'drizzle-orm'
  */
 interface CreateTodoInput {
     title: string
+    parentId: string
     description?: string
     priority?: 'low' | 'medium' | 'high'
     dueDate?: string | null
@@ -22,8 +23,8 @@ interface CreateTodoInput {
 async function createTodo(input: CreateTodoInput) {
     // Захардкодим userId своего аккаунта на dev supabase cloud
     const userId = 'htN0Vg2p7OA70Hx3sg0R21DDnHZl7ndT'
-    // Захардкодим parentId нашего INBOX
-    const parentId = 'e130ec09-d4bf-40de-9d54-137a572527ac'
+    // Используем parentId из входных параметров
+    const parentId = input.parentId
 
     try {
         // Определяем приоритет как число
@@ -107,6 +108,9 @@ async function createTodo(input: CreateTodoInput) {
 // Схема для валидации входных данных
 const inputSchema = {
     title: z.string().describe('Название задачи (обязательно)'),
+    parentId: z
+        .string()
+        .describe('ID родительского блока (получается агентом из контекста)'),
     description: z.string().optional().describe('Описание задачи'),
     priority: z.enum(['low', 'medium', 'high']).optional().describe('Приоритет задачи'),
     dueDate: z.string().optional().describe('Дата выполнения (ISO string)'),
@@ -118,15 +122,18 @@ const inputSchema = {
 export const toolDefinition: ToolDefinition = {
     name: 'createTodo',
     description:
-        'Создать новую задачу с названием, описанием, приоритетом, датой выполнения и тегами. Все задачи создаются в определенном родительском блоке.',
+        'Создать новую задачу с названием, описанием, приоритетом, датой выполнения и тегами. ВАЖНО: Для работы инструмента необходимо передать parentId - ID блока, в котором создается задача. Этот ID агент получает из контекста webhook запроса.',
     inputSchema: inputSchema,
     handler: async (input: unknown) => {
         try {
             const parsed = z.object(inputSchema).parse(input)
 
-            // Проверяем, что title присутствует
+            // Проверяем, что обязательные поля присутствуют
             if (!parsed.title) {
                 throw new Error('Название задачи обязательно')
+            }
+            if (!parsed.parentId) {
+                throw new Error('parentId обязателен - передайте ID блока из контекста')
             }
 
             const result = await createTodo(parsed as CreateTodoInput)

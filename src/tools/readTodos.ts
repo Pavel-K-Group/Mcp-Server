@@ -6,13 +6,20 @@ import { eq, and, isNull, desc, ilike, asc } from 'drizzle-orm'
 import type { TodoSearchInput } from '../types/todo.js'
 
 /**
+ * Расширенный интерфейс для поиска тудушек с обязательным parentId
+ */
+interface ExtendedTodoSearchInput extends TodoSearchInput {
+    parentId: string
+}
+
+/**
  * Инструмент для чтения тудушек
  */
-async function readTodos(input: TodoSearchInput) {
+async function readTodos(input: ExtendedTodoSearchInput) {
     // Захардкодим userId своего аккаунта на dev supabase cloud
     const userId = 'htN0Vg2p7OA70Hx3sg0R21DDnHZl7ndT'
-    // Захардкодим parentId нашего INBOX (тот же, что в createTodo.ts)
-    const parentId = 'e130ec09-d4bf-40de-9d54-137a572527ac'
+    // Используем parentId из входных параметров
+    const parentId = input.parentId
 
     try {
         if (input.todoId) {
@@ -250,6 +257,9 @@ async function readTodos(input: TodoSearchInput) {
 
 // Схема для валидации входных данных
 const inputSchema = {
+    parentId: z
+        .string()
+        .describe('ID родительского блока (получается агентом из контекста)'),
     todoId: z.string().optional().describe('Точный ID задачи (если известен)'),
     position: z.number().optional().describe('Номер задачи в списке (1, 2, 3...)'),
     titleSearch: z.string().optional().describe('Поиск по части названия задачи'),
@@ -265,12 +275,18 @@ const inputSchema = {
 export const toolDefinition: ToolDefinition = {
     name: 'readTodos',
     description:
-        'Получить список задач пользователя. Можно найти по ID, позиции в списке, поиску по названию, ограничить количество (например, 10 последних) или получить все задачи.',
+        'Получить список задач пользователя. Можно найти по ID, позиции в списке, поиску по названию, ограничить количество (например, 10 последних) или получить все задачи. ВАЖНО: Для работы инструмента необходимо передать parentId - ID блока, в котором хранятся задачи. Этот ID агент получает из контекста webhook запроса.',
     inputSchema: inputSchema,
     handler: async (input: unknown) => {
         try {
             const parsed = z.object(inputSchema).parse(input)
-            const result = await readTodos(parsed)
+
+            // Проверяем, что parentId присутствует
+            if (!parsed.parentId) {
+                throw new Error('parentId обязателен - передайте ID блока из контекста')
+            }
+
+            const result = await readTodos(parsed as ExtendedTodoSearchInput)
             return {
                 content: [
                     { type: 'text' as const, text: JSON.stringify(result, null, 2) },

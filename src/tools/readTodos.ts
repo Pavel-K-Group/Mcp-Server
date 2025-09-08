@@ -2,165 +2,27 @@ import { z } from 'zod'
 import type { ToolDefinition } from '../types/tool.js'
 import { db } from '../database/client.js'
 import { block } from '../database/schema.js'
-import { eq, and, isNull, desc, ilike, asc } from 'drizzle-orm'
-import type { TodoSearchInput } from '../types/todo.js'
+import { eq, and, isNull, desc, asc } from 'drizzle-orm'
 
 /**
- * Расширенный интерфейс для поиска тудушек с обязательным parentId
+ * Упрощенный интерфейс для чтения тудушек - только parentId и опциональный limit
  */
-interface ExtendedTodoSearchInput extends TodoSearchInput {
+interface SimpleTodoSearchInput {
     parentId: string
+    limit?: number
 }
 
 /**
  * Инструмент для чтения тудушек
  */
-async function readTodos(input: ExtendedTodoSearchInput) {
+async function readTodos(input: SimpleTodoSearchInput) {
     // Захардкодим userId своего аккаунта на dev supabase cloud
     const userId = 'htN0Vg2p7OA70Hx3sg0R21DDnHZl7ndT'
     // Используем parentId из входных параметров
     const parentId = input.parentId
 
     try {
-        if (input.todoId) {
-            // Поиск по точному ID
-            const result = await db
-                .select()
-                .from(block)
-                .where(
-                    and(
-                        eq(block.id, input.todoId),
-                        eq(block.userId, userId),
-                        eq(block.type, 'todo'),
-                        eq(block.parentId, parentId),
-                        isNull(block.deletedAt),
-                    ),
-                )
-                .limit(1)
-
-            if (result.length === 0) {
-                return {
-                    success: false,
-                    operation: 'read',
-                    error: 'Задача не найдена',
-                }
-            }
-
-            const todo = result[0]
-            const content = (todo.content as any) || {}
-
-            return {
-                success: true,
-                operation: 'read',
-                data: {
-                    todo: {
-                        id: todo.id,
-                        title: todo.title,
-                        description: content.description || '',
-                        completed: content.completed || false,
-                        priority: content.priority || 'low',
-                        dueDate: content.dueDate || null,
-                        tags: todo.tags || [],
-                        projectId: content.projectId || null,
-                        createdAt: todo.createdAt,
-                        updatedAt: todo.updatedAt,
-                    },
-                },
-                message: `Задача найдена: ${todo.title}`,
-            }
-        } else if (input.position) {
-            // Поиск по позиции в списке
-            const allTodos = await db
-                .select()
-                .from(block)
-                .where(
-                    and(
-                        eq(block.userId, userId),
-                        eq(block.type, 'todo'),
-                        eq(block.parentId, parentId),
-                        isNull(block.deletedAt),
-                    ),
-                )
-                .orderBy(asc(block.position), desc(block.createdAt))
-
-            if (input.position < 1 || input.position > allTodos.length) {
-                return {
-                    success: false,
-                    operation: 'read',
-                    error: `Позиция ${input.position} не найдена. Всего задач: ${allTodos.length}`,
-                }
-            }
-
-            const todo = allTodos[input.position - 1]
-            const content = (todo.content as any) || {}
-
-            return {
-                success: true,
-                operation: 'read',
-                data: {
-                    todo: {
-                        id: todo.id,
-                        title: todo.title,
-                        description: content.description || '',
-                        completed: content.completed || false,
-                        priority: content.priority || 'low',
-                        dueDate: content.dueDate || null,
-                        tags: todo.tags || [],
-                        projectId: content.projectId || null,
-                        createdAt: todo.createdAt,
-                        updatedAt: todo.updatedAt,
-                        position: input.position,
-                    },
-                },
-                message: `Задача найдена по позиции ${input.position}: ${todo.title}`,
-            }
-        } else if (input.titleSearch) {
-            // Поиск по части названия
-            const result = await db
-                .select()
-                .from(block)
-                .where(
-                    and(
-                        eq(block.userId, userId),
-                        eq(block.type, 'todo'),
-                        eq(block.parentId, parentId),
-                        ilike(block.title || '', `%${input.titleSearch}%`),
-                        isNull(block.deletedAt),
-                    ),
-                )
-                .limit(1)
-
-            if (result.length === 0) {
-                return {
-                    success: false,
-                    operation: 'read',
-                    error: `Задачи с названием содержащим "${input.titleSearch}" не найдены`,
-                }
-            }
-
-            const todo = result[0]
-            const content = (todo.content as any) || {}
-
-            return {
-                success: true,
-                operation: 'read',
-                data: {
-                    todo: {
-                        id: todo.id,
-                        title: todo.title,
-                        description: content.description || '',
-                        completed: content.completed || false,
-                        priority: content.priority || 'low',
-                        dueDate: content.dueDate || null,
-                        tags: todo.tags || [],
-                        projectId: content.projectId || null,
-                        createdAt: todo.createdAt,
-                        updatedAt: todo.updatedAt,
-                    },
-                },
-                message: `Задача найдена по поиску "${input.titleSearch}": ${todo.title}`,
-            }
-        } else if (input.limit) {
+        if (input.limit) {
             // Получить ограниченное количество задач (последние по дате создания)
             const limitedTodos = await db
                 .select()
@@ -260,9 +122,6 @@ const inputSchema = {
     parentId: z
         .string()
         .describe('ID родительского блока (получается агентом из контекста)'),
-    todoId: z.string().optional().describe('Точный ID задачи (если известен)'),
-    position: z.number().optional().describe('Номер задачи в списке (1, 2, 3...)'),
-    titleSearch: z.string().optional().describe('Поиск по части названия задачи'),
     limit: z
         .number()
         .min(1)
@@ -275,7 +134,7 @@ const inputSchema = {
 export const toolDefinition: ToolDefinition = {
     name: 'readTodos',
     description:
-        'Получить список задач пользователя. Можно найти по ID, позиции в списке, поиску по названию, ограничить количество (например, 10 последних) или получить все задачи. ВАЖНО: Для работы инструмента необходимо передать parentId - ID блока, в котором хранятся задачи. Этот ID агент получает из контекста webhook запроса.',
+        'Получить список задач пользователя. Можно ограничить количество (например, 10 последних) или получить все задачи. ВАЖНО: Для работы инструмента необходимо передать только parentId - ID блока, в котором хранятся задачи. Этот ID агент получает из контекста webhook запроса.',
     inputSchema: inputSchema,
     handler: async (input: unknown) => {
         try {
@@ -286,7 +145,7 @@ export const toolDefinition: ToolDefinition = {
                 throw new Error('parentId обязателен - передайте ID блока из контекста')
             }
 
-            const result = await readTodos(parsed as ExtendedTodoSearchInput)
+            const result = await readTodos(parsed as SimpleTodoSearchInput)
             return {
                 content: [
                     { type: 'text' as const, text: JSON.stringify(result, null, 2) },

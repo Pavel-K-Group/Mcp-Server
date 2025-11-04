@@ -122,7 +122,7 @@ const inputSchema = {
 export const toolDefinition: ToolDefinition = {
     name: 'createTodo',
     description:
-        'Создать новую задачу с названием, описанием, приоритетом, датой выполнения и тегами. ВАЖНО: Для работы инструмента необходимо передать parentId - ID блока, в котором создается задача. Этот ID агент получает из контекста webhook запроса.',
+        'Creates a new todo item in the specified parent block. Automatically sets completed=false and calculates position. Required: title (string), parentId (string). Optional: description (string), priority (low/medium/high), dueDate (ISO string), tags (array), projectId (string).',
     inputSchema: inputSchema,
     handler: async (input: unknown) => {
         try {

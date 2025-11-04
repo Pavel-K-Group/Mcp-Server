@@ -134,7 +134,7 @@ const inputSchema = {
 export const toolDefinition: ToolDefinition = {
     name: 'readTodos',
     description:
-        'Получить список задач пользователя. Можно ограничить количество (например, 10 последних) или получить все задачи. ВАЖНО: Для работы инструмента необходимо передать только parentId - ID блока, в котором хранятся задачи. Этот ID агент получает из контекста webhook запроса.',
+        'Retrieves a list of todos from a specified parent block. Returns all todos or a limited number sorted by creation date. Excludes soft-deleted items (deletedAt != null). Required: parentId (string). Optional: limit (number, 1-100).',
     inputSchema: inputSchema,
     handler: async (input: unknown) => {
         try {

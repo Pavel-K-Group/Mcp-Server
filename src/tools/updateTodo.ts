@@ -136,9 +136,9 @@ const inputSchema = {
     description: z.string().optional().describe('Новое описание задачи'),
     completed: z.boolean().optional().describe('Статус выполнения задачи (true/false)'),
     priority: z.enum(['low', 'medium', 'high']).optional().describe('Новый приоритет задачи'),
-    dueDate: z.string().optional().nullable().describe('Новая дата выполнения (ISO string)'),
+    dueDate: z.union([z.string(), z.null()]).optional().describe('Новая дата выполнения (ISO string)'),
     tags: z.array(z.string()).optional().describe('Новые теги для задачи'),
-    projectId: z.string().optional().nullable().describe('Новый ID проекта'),
+    projectId: z.union([z.string(), z.null()]).optional().describe('Новый ID проекта'),
 }
 
 // Экспортируем определение инструмента

@@ -280,7 +280,7 @@ export const block = pgTable(
         layoutData: jsonb('layout_data').default({}),
         archived: boolean().default(false),
         tags: jsonb().default([]),
-        position: integer().default(1024).notNull(),
+        position: integer(),
         hasChildren: boolean('has_children').default(false).notNull(),
         createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' })
             .defaultNow()
@@ -312,9 +312,6 @@ export const block = pgTable(
             .using('btree', table.id.asc().nullsLast().op('uuid_ops'))
             .where(sql`archived = false`),
         // Критичные проверки безопасности
-        check('block_position_positive', sql`${table.position} > 0`),
-        // Уникальность позиций в пределах родителя
-        unique('block_parent_position_unique').on(table.parentId, table.position),
         foreignKey({
             columns: [table.parentId],
             foreignColumns: [table.id],

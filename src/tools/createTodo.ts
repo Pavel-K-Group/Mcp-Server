@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { ToolDefinition } from '../types/tool.js'
 import { db } from '../database/client.js'
 import { block } from '../database/schema.js'
-import { eq, and, isNull, desc, asc } from 'drizzle-orm'
+import { eq, and, isNull } from 'drizzle-orm'
 
 /**
  * Интерфейс для входных данных создания тудушки
@@ -27,14 +27,6 @@ async function createTodo(input: CreateTodoInput) {
     const parentId = input.parentId
 
     try {
-        // Определяем приоритет как число
-        const priorityMap = {
-            low: 0,
-            medium: 1,
-            high: 2,
-        }
-        const priorityNumber = priorityMap[input.priority || 'low']
-
         // Подготавливаем контент для JSONB поля
         const content = {
             description: input.description || '',
@@ -44,31 +36,14 @@ async function createTodo(input: CreateTodoInput) {
             projectId: input.projectId || null,
         }
 
-        // Получаем следующую позицию для нового блока
-        const lastBlock = await db
-            .select({ position: block.position })
-            .from(block)
-            .where(
-                and(
-                    eq(block.userId, userId),
-                    eq(block.type, 'todo'),
-                    isNull(block.deletedAt),
-                ),
-            )
-            .orderBy(desc(block.position))
-            .limit(1)
-
-        const nextPosition = lastBlock.length > 0 ? lastBlock[0].position + 1 : 1024
-
-        // Создаем новый блок типа todo с обязательным parentId
+        // Создаем новый блок типа todo с обязательным parentId (position не указываем - будет null)
         const insertData = {
             userId,
             type: 'todo' as const,
             title: input.title,
             content,
             tags: input.tags || [],
-            position: nextPosition,
-            parentId, // Всегда используем захардкоженный parentId
+            parentId,
             hasChildren: false,
             archived: false,
         }
@@ -113,9 +88,9 @@ const inputSchema = {
         .describe('ID родительского блока (получается агентом из контекста)'),
     description: z.string().optional().describe('Описание задачи'),
     priority: z.enum(['low', 'medium', 'high']).optional().describe('Приоритет задачи'),
-    dueDate: z.string().optional().describe('Дата выполнения (ISO string)'),
+    dueDate: z.union([z.string(), z.null()]).optional().describe('Дата выполнения (ISO string)'),
     tags: z.array(z.string()).optional().describe('Теги для задачи'),
-    projectId: z.string().optional().describe('ID проекта'),
+    projectId: z.union([z.string(), z.null()]).optional().describe('ID проекта'),
 }
 
 // Экспортируем определение инструмента

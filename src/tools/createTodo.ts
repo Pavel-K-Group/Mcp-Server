@@ -12,9 +12,7 @@ interface CreateTodoInput {
     parentId: string
     description?: string
     priority?: 'low' | 'medium' | 'high'
-    dueDate?: string | null
     tags?: string[]
-    projectId?: string | null
 }
 
 /**
@@ -32,8 +30,6 @@ async function createTodo(input: CreateTodoInput) {
             description: input.description || '',
             completed: false,
             priority: input.priority || 'low',
-            dueDate: input.dueDate || null,
-            projectId: input.projectId || null,
         }
 
         // Создаем новый блок типа todo с обязательным parentId (position не указываем - будет null)
@@ -60,9 +56,7 @@ async function createTodo(input: CreateTodoInput) {
                     description: content.description,
                     completed: content.completed,
                     priority: content.priority,
-                    dueDate: content.dueDate,
                     tags: newTodo.tags,
-                    projectId: content.projectId,
                     parentId: newTodo.parentId,
                     position: newTodo.position,
                     createdAt: newTodo.createdAt,
@@ -88,16 +82,14 @@ const inputSchema = {
         .describe('ID родительского блока (получается агентом из контекста)'),
     description: z.string().optional().describe('Описание задачи'),
     priority: z.enum(['low', 'medium', 'high']).optional().describe('Приоритет задачи'),
-    dueDate: z.union([z.string(), z.null()]).optional().describe('Дата выполнения (ISO string)'),
     tags: z.array(z.string()).optional().describe('Теги для задачи'),
-    projectId: z.union([z.string(), z.null()]).optional().describe('ID проекта'),
 }
 
 // Экспортируем определение инструмента
 export const toolDefinition: ToolDefinition = {
     name: 'createTodo',
     description:
-        'Creates a new todo item in the specified parent block. Automatically sets completed=false and calculates position. Required: title (string), parentId (string). Optional: description (string), priority (low/medium/high), dueDate (ISO string), tags (array), projectId (string).',
+        'Creates a new todo item in the specified parent block. Automatically sets completed=false. Required: title (string), parentId (string). Optional: description (string), priority (low/medium/high), tags (array).',
     inputSchema: inputSchema,
     handler: async (input: unknown) => {
         try {

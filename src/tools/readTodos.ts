@@ -40,16 +40,14 @@ async function readTodos(input: SimpleTodoSearchInput) {
 
             // Добавляем позицию для удобства
             const numberedTodos = limitedTodos.map((todo, index) => {
-                const content = (todo.content as any) || {}
+                const content = (todo.content as Record<string, unknown>) || {}
                 return {
                     id: todo.id,
                     title: todo.title,
-                    description: content.description || '',
-                    completed: content.completed || false,
-                    priority: content.priority || 'low',
-                    dueDate: content.dueDate || null,
-                    tags: todo.tags || [],
-                    projectId: content.projectId || null,
+                    description: (content.description as string) || '',
+                    completed: (content.completed as boolean) || false,
+                    priority: (content.priority as 'low' | 'medium' | 'high') || 'low',
+                    tags: (todo.tags as string[]) || [],
                     createdAt: todo.createdAt,
                     updatedAt: todo.updatedAt,
                     position: index + 1,
@@ -82,16 +80,14 @@ async function readTodos(input: SimpleTodoSearchInput) {
 
             // Добавляем позицию для удобства
             const numberedTodos = userTodos.map((todo, index) => {
-                const content = (todo.content as any) || {}
+                const content = (todo.content as Record<string, unknown>) || {}
                 return {
                     id: todo.id,
                     title: todo.title,
-                    description: content.description || '',
-                    completed: content.completed || false,
-                    priority: content.priority || 'low',
-                    dueDate: content.dueDate || null,
-                    tags: todo.tags || [],
-                    projectId: content.projectId || null,
+                    description: (content.description as string) || '',
+                    completed: (content.completed as boolean) || false,
+                    priority: (content.priority as 'low' | 'medium' | 'high') || 'low',
+                    tags: (todo.tags as string[]) || [],
                     createdAt: todo.createdAt,
                     updatedAt: todo.updatedAt,
                     position: index + 1,

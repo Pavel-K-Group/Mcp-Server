@@ -13,9 +13,7 @@ interface UpdateTodoInput {
     description?: string
     completed?: boolean
     priority?: 'low' | 'medium' | 'high'
-    dueDate?: string | null
     tags?: string[]
-    projectId?: string | null
 }
 
 /**
@@ -45,32 +43,26 @@ async function updateTodo(input: UpdateTodoInput) {
         }
 
         // Получаем существующий content
-        const existingContent = (existingTodo.content as any) || {}
+        const existingContent = (existingTodo.content as Record<string, unknown>) || {}
 
         // Формируем обновленный content
         const updatedContent = {
             description:
                 input.description !== undefined
                     ? input.description
-                    : existingContent.description || '',
+                    : (existingContent.description as string) || '',
             completed:
                 input.completed !== undefined
                     ? input.completed
-                    : existingContent.completed || false,
+                    : (existingContent.completed as boolean) || false,
             priority:
                 input.priority !== undefined
                     ? input.priority
-                    : existingContent.priority || 'low',
-            dueDate:
-                input.dueDate !== undefined ? input.dueDate : existingContent.dueDate || null,
-            projectId:
-                input.projectId !== undefined
-                    ? input.projectId
-                    : existingContent.projectId || null,
+                    : (existingContent.priority as 'low' | 'medium' | 'high') || 'low',
         }
 
         // Формируем объект обновления
-        const updateData: any = {
+        const updateData: Record<string, unknown> = {
             content: updatedContent,
             updatedAt: new Date().toISOString(),
         }
@@ -109,9 +101,7 @@ async function updateTodo(input: UpdateTodoInput) {
                     description: updatedContent.description,
                     completed: updatedContent.completed,
                     priority: updatedContent.priority,
-                    dueDate: updatedContent.dueDate,
                     tags: updatedTodo.tags,
-                    projectId: updatedContent.projectId,
                     parentId: updatedTodo.parentId,
                     position: updatedTodo.position,
                     createdAt: updatedTodo.createdAt,
@@ -136,16 +126,14 @@ const inputSchema = {
     description: z.string().optional().describe('Новое описание задачи'),
     completed: z.boolean().optional().describe('Статус выполнения задачи (true/false)'),
     priority: z.enum(['low', 'medium', 'high']).optional().describe('Новый приоритет задачи'),
-    dueDate: z.union([z.string(), z.null()]).optional().describe('Новая дата выполнения (ISO string)'),
     tags: z.array(z.string()).optional().describe('Новые теги для задачи'),
-    projectId: z.union([z.string(), z.null()]).optional().describe('Новый ID проекта'),
 }
 
 // Экспортируем определение инструмента
 export const toolDefinition: ToolDefinition = {
     name: 'updateTodo',
     description:
-        'Updates specified fields of an existing todo. Only provided fields are changed, others remain unchanged. Verifies ownership and updates updatedAt timestamp. Required: todoId (string). Optional: title, description, completed (boolean), priority (low/medium/high), dueDate (ISO string or null), tags (array), projectId (string or null).',
+        'Updates specified fields of an existing todo. Only provided fields are changed, others remain unchanged. Verifies ownership and updates updatedAt timestamp. Required: todoId (string). Optional: title, description, completed (boolean), priority (low/medium/high), tags (array).',
     inputSchema: inputSchema,
     handler: async (input: unknown) => {
         try {

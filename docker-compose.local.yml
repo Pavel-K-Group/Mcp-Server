@@ -1,5 +1,5 @@
 services:
-    universal-mcp-server:
+    universal_mcp_server:
         build: 
             context: .
             no_cache: true

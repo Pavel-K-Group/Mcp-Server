@@ -3,23 +3,33 @@ import type { ToolDefinition } from '../types/tool.js'
 import { db } from '../database/client.js'
 import { block } from '../database/schema.js'
 import { eq, and, isNull, desc, asc } from 'drizzle-orm'
+import { getTodoListId, getAgentId, getUserId } from '../context/sessionContext.js'
 
 /**
- * Упрощенный интерфейс для чтения тудушек - только parentId и опциональный limit
+ * Входные данные для чтения задач
  */
-interface SimpleTodoSearchInput {
-    parentId: string
+interface ReadTodosInput {
     limit?: number
 }
 
 /**
- * Инструмент для чтения тудушек
+ * Получение списка задач
  */
-async function readTodos(input: SimpleTodoSearchInput) {
-    // Захардкодим userId своего аккаунта на dev supabase cloud
-    const userId = 'htN0Vg2p7OA70Hx3sg0R21DDnHZl7ndT'
-    // Используем parentId из входных параметров
-    const parentId = input.parentId
+async function readTodos(input: ReadTodosInput) {
+    // Берем данные из контекста сессии
+    const userId = getUserId()
+    const parentId = getTodoListId()
+    const agentId = getAgentId()
+    
+    if (!userId) {
+        throw new Error('User not authenticated. Session userId is required.')
+    }
+    
+    if (!parentId) {
+        throw new Error('Session not configured. todoListId is required.')
+    }
+    
+    console.log(`📖 readTodos: userId=${userId}, parentId=${parentId}, agentId=${agentId || 'not set'}`)
 
     try {
         if (input.limit) {
@@ -115,33 +125,25 @@ async function readTodos(input: SimpleTodoSearchInput) {
 
 // Схема для валидации входных данных
 const inputSchema = {
-    parentId: z
-        .string()
-        .describe('ID родительского блока (получается агентом из контекста)'),
     limit: z
         .number()
         .min(1)
         .max(100)
         .optional()
-        .describe('Количество задач для получения (1-100, например 10 последних)'),
+        .describe('Number of tasks to retrieve (1-100). If not specified, returns all tasks'),
 }
 
 // Экспортируем определение инструмента
 export const toolDefinition: ToolDefinition = {
     name: 'readTodos',
     description:
-        'Retrieves a list of todos from a specified parent block. Returns all todos or a limited number sorted by creation date. Excludes soft-deleted items (deletedAt != null). Required: parentId (string). Optional: limit (number, 1-100).',
+        'Get list of tasks. Returns all tasks by default. Optional: limit (number 1-100) to get only recent tasks.',
     inputSchema: inputSchema,
     handler: async (input: unknown) => {
         try {
             const parsed = z.object(inputSchema).parse(input)
 
-            // Проверяем, что parentId присутствует
-            if (!parsed.parentId) {
-                throw new Error('parentId обязателен - передайте ID блока из контекста')
-            }
-
-            const result = await readTodos(parsed as SimpleTodoSearchInput)
+            const result = await readTodos(parsed as ReadTodosInput)
             return {
                 content: [
                     { type: 'text' as const, text: JSON.stringify(result, null, 2) },

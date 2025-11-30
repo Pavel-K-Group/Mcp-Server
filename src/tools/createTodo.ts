@@ -3,26 +3,36 @@ import type { ToolDefinition } from '../types/tool.js'
 import { db } from '../database/client.js'
 import { block } from '../database/schema.js'
 import { eq, and, isNull } from 'drizzle-orm'
+import { getTodoListId, getAgentId, getUserId } from '../context/sessionContext.js'
 
 /**
- * Интерфейс для входных данных создания тудушки
+ * Входные данные для создания задачи
  */
 interface CreateTodoInput {
     title: string
-    parentId: string
     description?: string
     priority?: 'low' | 'medium' | 'high'
     tags?: string[]
 }
 
 /**
- * Инструмент для создания тудушек
+ * Создание новой задачи
  */
 async function createTodo(input: CreateTodoInput) {
-    // Захардкодим userId своего аккаунта на dev supabase cloud
-    const userId = 'htN0Vg2p7OA70Hx3sg0R21DDnHZl7ndT'
-    // Используем parentId из входных параметров
-    const parentId = input.parentId
+    // Берем данные из контекста сессии
+    const userId = getUserId()
+    const parentId = getTodoListId()
+    const agentId = getAgentId()
+    
+    if (!userId) {
+        throw new Error('User not authenticated. Session userId is required.')
+    }
+    
+    if (!parentId) {
+        throw new Error('Session not configured. todoListId is required.')
+    }
+    
+    console.log(`✏️ createTodo: "${input.title}", userId=${userId}, parentId=${parentId}, agentId=${agentId || 'not set'}`)
 
     try {
         // Подготавливаем контент для JSONB поля
@@ -76,20 +86,17 @@ async function createTodo(input: CreateTodoInput) {
 
 // Схема для валидации входных данных
 const inputSchema = {
-    title: z.string().describe('Название задачи (обязательно)'),
-    parentId: z
-        .string()
-        .describe('ID родительского блока (получается агентом из контекста)'),
-    description: z.string().optional().describe('Описание задачи'),
-    priority: z.enum(['low', 'medium', 'high']).optional().describe('Приоритет задачи'),
-    tags: z.array(z.string()).optional().describe('Теги для задачи'),
+    title: z.string().describe('Task title'),
+    description: z.string().optional().describe('Detailed task description'),
+    priority: z.enum(['low', 'medium', 'high']).optional().describe('Task priority: low, medium, or high'),
+    tags: z.array(z.string()).optional().describe('Tags for task categorization'),
 }
 
 // Экспортируем определение инструмента
 export const toolDefinition: ToolDefinition = {
     name: 'createTodo',
     description:
-        'Creates a new todo item in the specified parent block. Automatically sets completed=false. Required: title (string), parentId (string). Optional: description (string), priority (low/medium/high), tags (array).',
+        'Create a new task. Required: title (string). Optional: description (string), priority (low/medium/high), tags (array of strings).',
     inputSchema: inputSchema,
     handler: async (input: unknown) => {
         try {
@@ -98,9 +105,6 @@ export const toolDefinition: ToolDefinition = {
             // Проверяем, что обязательные поля присутствуют
             if (!parsed.title) {
                 throw new Error('Название задачи обязательно')
-            }
-            if (!parsed.parentId) {
-                throw new Error('parentId обязателен - передайте ID блока из контекста')
             }
 
             const result = await createTodo(parsed as CreateTodoInput)

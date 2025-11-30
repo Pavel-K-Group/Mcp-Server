@@ -3,6 +3,7 @@ import type { ToolDefinition } from '../types/tool.js'
 import { db } from '../database/client.js'
 import { block } from '../database/schema.js'
 import { eq, and, isNull } from 'drizzle-orm'
+import { getTodoListId, getAgentId, getUserId } from '../context/sessionContext.js'
 
 /**
  * Интерфейс для входных данных удаления тудушки
@@ -16,8 +17,16 @@ interface DeleteTodoInput {
  * Инструмент для удаления тудушек
  */
 async function deleteTodo(input: DeleteTodoInput) {
-    // Захардкодим userId своего аккаунта на dev supabase cloud
-    const userId = 'htN0Vg2p7OA70Hx3sg0R21DDnHZl7ndT'
+    // Берем данные из контекста сессии
+    const userId = getUserId()
+    const todoListId = getTodoListId()
+    const agentId = getAgentId()
+    
+    if (!userId) {
+        throw new Error('User not authenticated. Session userId is required.')
+    }
+    
+    console.log(`🗑️ deleteTodo: todoId=${input.todoId}, userId=${userId}, agentId=${agentId || 'not set'}`)
 
     try {
         // Проверяем существование задачи

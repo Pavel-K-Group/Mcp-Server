@@ -9,6 +9,11 @@ import express from 'express'
 import cors from 'cors'
 import { loadAllTools } from './utils/tool-loader.js'
 import { testConnection } from './database/client.js'
+import { 
+    createSessionContext, 
+    removeSessionContext, 
+    setActiveSession 
+} from './context/sessionContext.js'
 
 // Create an MCP server
 const server = new McpServer({
@@ -58,17 +63,32 @@ app.get('/', (req, res) => {
 const transports = new Map<string, SSEServerTransport>()
 
 // SSE endpoint для MCP - для получения сообщений от сервера
+// Поддерживает query params: todoListId, agentId, userId
+// Пример: /sse?todoListId=XXX&agentId=YYY&userId=ZZZ
 app.get('/sse', async (req, res) => {
-    console.log('Новое SSE соединение установлено')
+    // Парсим query params для контекста сессии
+    const todoListId = typeof req.query.todoListId === 'string' ? req.query.todoListId : null
+    const agentId = typeof req.query.agentId === 'string' ? req.query.agentId : null
+    const userId = typeof req.query.userId === 'string' ? req.query.userId : null
+    
+    console.log('📡 New SSE connection:', {
+        todoListId: todoListId || 'not set',
+        agentId: agentId || 'not set',
+        userId: userId || 'not set',
+    })
 
     try {
         const transport = new SSEServerTransport('/message', res)
-        const sessionId = `session_${Date.now()}_${Math.random()}`
+        const sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(7)}`
         transports.set(sessionId, transport)
+        
+        // Создаем контекст сессии с параметрами из query
+        createSessionContext(sessionId, todoListId, agentId, userId)
 
-        // Удаляем транспорт при закрытии соединения
+        // Удаляем транспорт и контекст при закрытии соединения
         res.on('close', () => {
             transports.delete(sessionId)
+            removeSessionContext(sessionId)
             console.log(`❌ SSE соединение ${sessionId} закрыто`)
         })
 
@@ -85,14 +105,18 @@ app.post('/message', async (req, res) => {
     console.log('🔄 MCP протокол: получен запрос от клиента')
 
     try {
-        // Ищем любой активный транспорт для обработки сообщения
-        const activeTransport = Array.from(transports.values())[0]
-
-        if (!activeTransport) {
+        // Ищем активный транспорт для обработки сообщения
+        const transportEntries = Array.from(transports.entries())
+        
+        if (transportEntries.length === 0) {
             return res.status(400).json({
                 error: 'No active SSE connection found',
             })
         }
+
+        // Используем последний активный транспорт и устанавливаем его сессию как активную
+        const [sessionId, activeTransport] = transportEntries[transportEntries.length - 1]
+        setActiveSession(sessionId)
 
         // Обрабатываем POST сообщение через активный транспорт
         await activeTransport.handlePostMessage(req, res)

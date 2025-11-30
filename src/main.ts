@@ -40,8 +40,8 @@ async function registerAllTools() {
 const app = express()
 const PORT = Number(process.env.PORT) || 8080
 
-// Middleware для парсинга JSON (нужно для Streamable HTTP)
-app.use(express.json())
+// НЕ используем express.json() глобально — это ломает SSE!
+// JSON парсинг применяется только к /mcp endpoint ниже
 
 // Настраиваем CORS
 app.use(
@@ -97,7 +97,7 @@ function parseSessionParams(req: Request) {
  * - Headers: Accept: application/json, text/event-stream
  *            Content-Type: application/json
  */
-app.all('/mcp', async (req: Request, res: Response) => {
+app.all('/mcp', express.json(), async (req: Request, res: Response) => {
     // Получаем session ID из заголовка (если есть)
     const sessionId = req.headers['mcp-session-id'] as string | undefined
 

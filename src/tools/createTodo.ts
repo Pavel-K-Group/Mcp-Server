@@ -36,10 +36,12 @@ async function createTodo(input: CreateTodoInput) {
 
     try {
         // Подготавливаем контент для JSONB поля
+        // assigneeId автоматически назначается на агента, создавшего задачу
         const content = {
             description: input.description || '',
             completed: false,
             priority: input.priority || 'low',
+            ...(agentId && { assigneeId: agentId }),
         }
 
         // Создаем новый блок типа todo с обязательным parentId (position не указываем - будет null)
@@ -66,6 +68,7 @@ async function createTodo(input: CreateTodoInput) {
                     description: content.description,
                     completed: content.completed,
                     priority: content.priority,
+                    assigneeId: agentId || null,
                     tags: newTodo.tags,
                     parentId: newTodo.parentId,
                     position: newTodo.position,
@@ -73,7 +76,7 @@ async function createTodo(input: CreateTodoInput) {
                     updatedAt: newTodo.updatedAt,
                 },
             },
-            message: `Задача "${input.title}" успешно создана`,
+            message: `Task "${input.title}" created successfully`,
         }
     } catch (error) {
         return {

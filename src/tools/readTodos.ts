@@ -13,7 +13,8 @@ interface ReadTodosInput {
 }
 
 /**
- * Получение списка задач
+ * Получение списка задач агента
+ * Возвращает только задачи, назначенные на текущего агента (assigneeId = agentId)
  */
 async function readTodos(input: ReadTodosInput) {
     // Берем данные из контекста сессии
@@ -29,96 +30,68 @@ async function readTodos(input: ReadTodosInput) {
         throw new Error('Session not configured. todoListId is required.')
     }
     
-    console.log(`📖 readTodos: userId=${userId}, parentId=${parentId}, agentId=${agentId || 'not set'}`)
+    if (!agentId) {
+        throw new Error('Agent not identified. Session agentId is required.')
+    }
+    
+    console.log(`📖 readTodos: userId=${userId}, parentId=${parentId}, agentId=${agentId}`)
 
     try {
-        if (input.limit) {
-            // Получить ограниченное количество задач (последние по дате создания)
-            const limitedTodos = await db
-                .select()
-                .from(block)
-                .where(
-                    and(
-                        eq(block.userId, userId),
-                        eq(block.type, 'todo'),
-                        eq(block.parentId, parentId),
-                        isNull(block.deletedAt),
-                    ),
-                )
-                .orderBy(desc(block.createdAt))
-                .limit(input.limit)
+        // Получаем все задачи компании
+        const allTodos = await db
+            .select()
+            .from(block)
+            .where(
+                and(
+                    eq(block.userId, userId),
+                    eq(block.type, 'todo'),
+                    eq(block.parentId, parentId),
+                    isNull(block.deletedAt),
+                ),
+            )
+            .orderBy(asc(block.position), desc(block.createdAt))
+        
+        // Фильтруем только задачи, назначенные на текущего агента
+        const agentTodos = allTodos.filter((todo) => {
+            const content = (todo.content as Record<string, unknown>) || {}
+            return content.assigneeId === agentId
+        })
+        
+        // Применяем limit если указан
+        const limitedTodos = input.limit 
+            ? agentTodos.slice(0, input.limit)
+            : agentTodos
 
-            // Добавляем позицию для удобства
-            const numberedTodos = limitedTodos.map((todo, index) => {
-                const content = (todo.content as Record<string, unknown>) || {}
-                return {
-                    id: todo.id,
-                    title: todo.title,
-                    description: (content.description as string) || '',
-                    completed: (content.completed as boolean) || false,
-                    priority: (content.priority as 'low' | 'medium' | 'high') || 'low',
-                    tags: (todo.tags as string[]) || [],
-                    createdAt: todo.createdAt,
-                    updatedAt: todo.updatedAt,
-                    position: index + 1,
-                }
-            })
-
+        // Форматируем для вывода
+        const formattedTodos = limitedTodos.map((todo, index) => {
+            const content = (todo.content as Record<string, unknown>) || {}
             return {
-                success: true,
-                operation: 'read',
-                data: {
-                    todos: numberedTodos,
-                    count: numberedTodos.length,
-                },
-                message: `Найдено ${numberedTodos.length} последних задач`,
+                id: todo.id,
+                title: todo.title,
+                description: (content.description as string) || '',
+                completed: (content.completed as boolean) || false,
+                priority: (content.priority as 'low' | 'medium' | 'high') || 'low',
+                tags: (todo.tags as string[]) || [],
+                createdAt: todo.createdAt,
+                updatedAt: todo.updatedAt,
+                position: index + 1,
             }
-        } else {
-            // Получить пронумерованный список всех тудушек
-            const userTodos = await db
-                .select()
-                .from(block)
-                .where(
-                    and(
-                        eq(block.userId, userId),
-                        eq(block.type, 'todo'),
-                        eq(block.parentId, parentId),
-                        isNull(block.deletedAt),
-                    ),
-                )
-                .orderBy(asc(block.position), desc(block.createdAt))
+        })
 
-            // Добавляем позицию для удобства
-            const numberedTodos = userTodos.map((todo, index) => {
-                const content = (todo.content as Record<string, unknown>) || {}
-                return {
-                    id: todo.id,
-                    title: todo.title,
-                    description: (content.description as string) || '',
-                    completed: (content.completed as boolean) || false,
-                    priority: (content.priority as 'low' | 'medium' | 'high') || 'low',
-                    tags: (todo.tags as string[]) || [],
-                    createdAt: todo.createdAt,
-                    updatedAt: todo.updatedAt,
-                    position: index + 1,
-                }
-            })
-
-            return {
-                success: true,
-                operation: 'read',
-                data: {
-                    todos: numberedTodos,
-                    count: numberedTodos.length,
-                },
-                message: `Найдено ${numberedTodos.length} задач`,
-            }
+        return {
+            success: true,
+            operation: 'read',
+            data: {
+                todos: formattedTodos,
+                count: formattedTodos.length,
+            },
+            message: `Found ${formattedTodos.length} task(s)`,
         }
     } catch (error) {
         return {
             success: false,
             operation: 'read',
-            error: error instanceof Error ? error.message : 'Неизвестная ошибка',
+            error: error instanceof Error ? error.message : 'Unknown error',
         }
     }
 }

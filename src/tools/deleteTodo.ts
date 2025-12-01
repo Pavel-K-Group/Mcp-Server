@@ -26,7 +26,7 @@ async function deleteTodo(input: DeleteTodoInput) {
         throw new Error('User not authenticated. Session userId is required.')
     }
     
-    console.log(`🗑️ deleteTodo: todoId=${input.todoId}, userId=${userId}, agentId=${agentId || 'not set'}`)
+    console.log(`🗑️ deleteTodo: todo=${input.todoId?.slice(0, 8)}, user=${userId?.slice(0, 8)}, agent=${agentId?.slice(0, 8) || 'none'}, permanent=${input.permanent || false}`)
 
     try {
         // Проверяем существование задачи

@@ -1,22 +1,86 @@
+import { sql } from 'drizzle-orm'
 import {
-    pgTable,
+    boolean,
+    check,
     foreignKey,
+    index,
+    integer,
+    jsonb,
+    numeric,
+    pgEnum,
+    pgTable,
     text,
     timestamp,
-    uniqueIndex,
-    integer,
     unique,
-    index,
-    boolean,
-    jsonb,
+    uniqueIndex,
     uuid,
-    check,
-    pgEnum,
 } from 'drizzle-orm/pg-core'
-import { sql } from 'drizzle-orm'
 
-// PostgreSQL enum для типов блоков
-export const blockTypeEnum = pgEnum('block_type', [
+export const user = pgTable('user', {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    email: text('email').notNull().unique(),
+    emailVerified: boolean('email_verified').default(false).notNull(),
+    image: text('image'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at')
+        .defaultNow()
+        .$onUpdate(() => /* @__PURE__ */ new Date())
+        .notNull(),
+    username: text('username').unique(),
+    displayUsername: text('display_username'),
+    isAnonymous: boolean('is_anonymous'),
+    settings: jsonb().default({}),
+})
+
+export const session = pgTable('session', {
+    id: text('id').primaryKey(),
+    expiresAt: timestamp('expires_at').notNull(),
+    token: text('token').notNull().unique(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at')
+        .$onUpdate(() => /* @__PURE__ */ new Date())
+        .notNull(),
+    ipAddress: text('ip_address'),
+    userAgent: text('user_agent'),
+    userId: text('user_id')
+        .notNull()
+        .references(() => user.id, { onDelete: 'cascade' }),
+})
+
+export const account = pgTable('account', {
+    id: text('id').primaryKey(),
+    accountId: text('account_id').notNull(),
+    providerId: text('provider_id').notNull(),
+    userId: text('user_id')
+        .notNull()
+        .references(() => user.id, { onDelete: 'cascade' }),
+    accessToken: text('access_token'),
+    refreshToken: text('refresh_token'),
+    idToken: text('id_token'),
+    accessTokenExpiresAt: timestamp('access_token_expires_at'),
+    refreshTokenExpiresAt: timestamp('refresh_token_expires_at'),
+    scope: text('scope'),
+    password: text('password'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at')
+        .$onUpdate(() => /* @__PURE__ */ new Date())
+        .notNull(),
+})
+
+export const verification = pgTable('verification', {
+    id: text('id').primaryKey(),
+    identifier: text('identifier').notNull(),
+    value: text('value').notNull(),
+    expiresAt: timestamp('expires_at').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at')
+        .defaultNow()
+        .$onUpdate(() => /* @__PURE__ */ new Date())
+        .notNull(),
+})
+
+export const blockType = pgEnum('block_type', [
     'root',
     'text',
     'todo',
@@ -44,61 +108,80 @@ export const blockTypeEnum = pgEnum('block_type', [
     'column_list',
     'rule',
     'event',
+    'role',
+    'group',
+    'table'
 ])
 
-// TypeScript типы для типобезопасности
-export type BlockType =
-    | 'root'
-    | 'event'
-    | 'text'
-    | 'todo'
-    | 'heading'
-    | 'list'
-    | 'cycle'
-    | 'final'
-    | 'container'
-    | 'image'
-    | 'media'
-    | 'link'
-    | 'unit_ref'
-    | 'calendar'
-    | 'goal'
-    | 'context'
-    | 'excalidraw'
-    | 'startPoint'
-    | 'endPoint'
-    | 'company'
-    | 'department'
-    | 'position'
-    | 'page'
-    | 'database'
-    | 'column'
-    | 'column_list'
-    | 'rule'
-export type UnitType = 'assistant' | 'human' | 'timelix' | 'system'
-
-export const account = pgTable(
-    'account',
+export const block = pgTable(
+    'block',
     {
-        id: text().primaryKey().notNull(),
-        accountId: text('account_id').notNull(),
-        providerId: text('provider_id').notNull(),
+        id: uuid().defaultRandom().primaryKey().notNull(),
         userId: text('user_id').notNull(),
-        accessToken: text('access_token'),
-        refreshToken: text('refresh_token'),
-        idToken: text('id_token'),
-        accessTokenExpiresAt: timestamp('access_token_expires_at', { mode: 'date' }),
-        refreshTokenExpiresAt: timestamp('refresh_token_expires_at', { mode: 'date' }),
-        scope: text(),
-        password: text(),
-        createdAt: timestamp('created_at', { mode: 'date' }).notNull(),
-        updatedAt: timestamp('updated_at', { mode: 'date' }).notNull(),
+        parentId: uuid('parent_id'),
+        groupId: uuid('group_id'), // Логическая группировка (планета, проект и т.д.)
+        type: blockType().notNull(),
+        title: text(),
+        content: jsonb().default({}),
+        archived: boolean().default(false),
+        tags: jsonb().default([]),
+        position: integer(),
+        hasChildren: boolean('has_children').default(false).notNull(),
+        createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' })
+            .defaultNow()
+            .notNull(),
+        updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' })
+            .defaultNow()
+            .notNull(),
+        deletedAt: timestamp('deleted_at', { withTimezone: true, mode: 'string' }),
+        layoutData: jsonb('layout_data').default({}),
     },
     (table) => [
+        index('block_archived_partial_idx')
+            .using('btree', table.id.asc().nullsLast().op('uuid_ops'))
+            .where(sql`(archived = false)`),
+        index('block_content_gin_idx').using(
+            'gin',
+            table.content.asc().nullsLast().op('jsonb_ops'),
+        ),
+        index('block_layout_data_gin_idx').using(
+            'gin',
+            table.layoutData.asc().nullsLast().op('jsonb_ops'),
+        ),
+        index('block_parent_idx').using(
+            'btree',
+            table.parentId.asc().nullsLast().op('uuid_ops'),
+        ),
+        index('block_parent_position_idx').using(
+            'btree',
+            table.parentId.asc().nullsLast().op('uuid_ops'),
+            table.position.asc().nullsLast().op('int4_ops'),
+        ),
+        index('block_group_idx').using(
+            'btree',
+            table.groupId.asc().nullsLast().op('uuid_ops'),
+        ),
+        index('block_tags_gin_idx').using(
+            'gin',
+            table.tags.asc().nullsLast().op('jsonb_ops'),
+        ),
+        index('block_type_idx').using(
+            'btree',
+            table.type.asc().nullsLast().op('enum_ops'),
+        ),
+        index('block_user_idx').using(
+            'btree',
+            table.userId.asc().nullsLast().op('text_ops'),
+        ),
+        foreignKey({
+            columns: [table.parentId],
+            foreignColumns: [table.id],
+            name: 'block_parent_id_block_id_fk',
+        }).onDelete('set null'),
         foreignKey({
             columns: [table.userId],
             foreignColumns: [user.id],
-            name: 'account_user_id_user_id_fk',
+            name: 'block_user_id_user_id_fk',
         }).onDelete('cascade'),
     ],
 )
@@ -109,8 +192,15 @@ export const currency = pgTable(
         id: text().primaryKey().notNull(),
         userId: text('user_id').notNull(),
         coins: integer().default(0).notNull(),
-        energy: integer().default(0).notNull(),
+        physicalEnergy: integer('physical_energy').default(100).notNull(),
+        mentalEnergy: integer('mental_energy').default(100).notNull(),
+        willpower: integer().default(100).notNull(),
         scrolls: integer().default(0).notNull(),
+        lastDailyReward: timestamp('last_daily_reward', {
+            precision: 6,
+            withTimezone: true,
+            mode: 'string',
+        }),
         updatedAt: timestamp('updated_at', {
             precision: 6,
             withTimezone: true,
@@ -132,25 +222,37 @@ export const currency = pgTable(
     ],
 )
 
-export const session = pgTable(
-    'session',
+export const energyChangeLog = pgTable(
+    'energy_change_log',
     {
         id: text().primaryKey().notNull(),
-        expiresAt: timestamp('expires_at', { mode: 'date' }).notNull(),
-        token: text().notNull(),
-        createdAt: timestamp('created_at', { mode: 'date' }).notNull(),
-        updatedAt: timestamp('updated_at', { mode: 'date' }).notNull(),
-        ipAddress: text('ip_address'),
-        userAgent: text('user_agent'),
         userId: text('user_id').notNull(),
+        energyType: text('energy_type').notNull(), // 'physical', 'mental', 'willpower'
+        oldValue: integer('old_value').notNull(),
+        newValue: integer('new_value').notNull(),
+        reason: text(), // причина изменения (опционально)
+        createdAt: timestamp('created_at', {
+            precision: 6,
+            withTimezone: true,
+            mode: 'string',
+        })
+            .default(sql`CURRENT_TIMESTAMP`)
+            .notNull(),
     },
     (table) => [
+        index('idx_energy_log_user').using(
+            'btree',
+            table.userId.asc().nullsLast().op('text_ops'),
+        ),
+        index('idx_energy_log_created').using(
+            'btree',
+            table.createdAt.desc().nullsLast(),
+        ),
         foreignKey({
             columns: [table.userId],
             foreignColumns: [user.id],
-            name: 'session_user_id_user_id_fk',
+            name: 'energy_change_log_user_id_fk',
         }).onDelete('cascade'),
-        unique('session_token_unique').on(table.token),
     ],
 )
 
@@ -161,8 +263,6 @@ export const unit = pgTable(
         userId: text('user_id').notNull(),
         name: text().notNull(),
         description: text(),
-        avatar: text(),
-        avatarType: text('avatar_type').default('emoji').notNull(), // 'emoji' | 'generated' | 'uploaded'
         model: text().notNull(),
         systemPrompt: text('system_prompt').notNull(),
         tools: jsonb().default([]),
@@ -175,6 +275,10 @@ export const unit = pgTable(
             .notNull(),
         avatarUrl: text('avatar_url'),
         unitType: text('unit_type').default('assistant').notNull(),
+        agentConnectionType: text('agent_connection_type').default('model').notNull(),
+        webhookUrl: text('webhook_url'),
+        webhookSecret: text('webhook_secret'),
+        favoriteOrder: numeric('favorite_order'),
     },
     (table) => [
         index('assistants_name_idx').using(
@@ -189,21 +293,19 @@ export const unit = pgTable(
             'btree',
             table.unitType.asc().nullsLast().op('text_ops'),
         ),
-        // Проверка типов unit
-        check(
-            'unit_type_valid',
-            sql`${table.unitType} IN ('assistant','human','timelix','system')`,
-        ),
-        // Проверка типов аватара
-        check(
-            'avatar_type_valid',
-            sql`${table.avatarType} IN ('emoji','generated','uploaded')`,
-        ),
         foreignKey({
             columns: [table.userId],
             foreignColumns: [user.id],
             name: 'assistants_user_id_user_id_fk',
         }).onDelete('cascade'),
+        check(
+            'mode_valid',
+            sql`agent_connection_type = ANY (ARRAY['model'::text, 'webhook'::text])`,
+        ),
+        check(
+            'unit_type_valid',
+            sql`unit_type = ANY (ARRAY['assistant'::text, 'human'::text, 'timelix'::text, 'system'::text])`,
+        ),
     ],
 )
 
@@ -240,128 +342,92 @@ export const unitLink = pgTable(
     ],
 )
 
-export const user = pgTable(
-    'user',
-    {
-        id: text().primaryKey().notNull(),
-        name: text().notNull(),
-        email: text().notNull(),
-        emailVerified: boolean('email_verified').notNull(),
-        image: text(),
-        createdAt: timestamp('created_at', { mode: 'date' }).notNull(),
-        updatedAt: timestamp('updated_at', { mode: 'date' }).notNull(),
-        username: text(),
-        isAnonymous: boolean('is_anonymous'),
-    },
-    (table) => [
-        unique('user_email_unique').on(table.email),
-        unique('user_username_unique').on(table.username),
-    ],
-)
-
-export const verification = pgTable('verification', {
-    id: text().primaryKey().notNull(),
-    identifier: text().notNull(),
-    value: text().notNull(),
-    expiresAt: timestamp('expires_at', { mode: 'date' }).notNull(),
-    createdAt: timestamp('created_at', { mode: 'date' }),
-    updatedAt: timestamp('updated_at', { mode: 'date' }),
-})
-
-export const block = pgTable(
-    'block',
+export const councilSeats = pgTable(
+    'council_seats',
     {
         id: uuid().defaultRandom().primaryKey().notNull(),
-        userId: text('user_id').notNull(),
-        parentId: uuid('parent_id'),
-        type: blockTypeEnum('type').notNull(),
-        title: text(),
-        content: jsonb().default({}),
-        layoutData: jsonb('layout_data').default({}),
-        archived: boolean().default(false),
-        tags: jsonb().default([]),
-        position: integer(),
-        hasChildren: boolean('has_children').default(false).notNull(),
+        userId: text('user_id')
+            .notNull()
+            .references(() => user.id, { onDelete: 'cascade' }),
+        seatNumber: integer('seat_number').notNull(),
+        roleId: uuid('role_id')
+            .notNull()
+            .references(() => block.id, { onDelete: 'cascade' }),
+        hasVotingRight: boolean('has_voting_right').default(true).notNull(),
+        votingWeight: integer('voting_weight').default(1).notNull(),
+        assignedAt: timestamp('assigned_at', { withTimezone: true, mode: 'string' })
+            .defaultNow()
+            .notNull(),
         createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' })
             .defaultNow()
             .notNull(),
         updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' })
             .defaultNow()
             .notNull(),
-        deletedAt: timestamp('deleted_at', { withTimezone: true, mode: 'string' }),
     },
     (table) => [
-        index('block_parent_idx').using(
-            'btree',
-            table.parentId.asc().nullsLast().op('uuid_ops'),
-        ),
-        index('block_type_idx').using('btree', table.type.asc().nullsLast()),
-        index('block_user_idx').using(
+        unique('council_seats_user_seat_unique').on(table.userId, table.seatNumber),
+        unique('council_seats_user_role_unique').on(table.userId, table.roleId),
+        index('council_seats_user_idx').using(
             'btree',
             table.userId.asc().nullsLast().op('text_ops'),
         ),
-        index('block_parent_position_idx').using(
+        index('council_seats_role_idx').using(
             'btree',
-            table.parentId.asc().nullsLast().op('uuid_ops'),
-            table.position.asc().nullsLast().op('int4_ops'),
+            table.roleId.asc().nullsLast().op('uuid_ops'),
         ),
-        index('block_content_gin_idx').using('gin', table.content),
-        index('block_layout_data_gin_idx').using('gin', table.layoutData),
-        index('block_tags_gin_idx').using('gin', table.tags),
-        index('block_archived_partial_idx')
-            .using('btree', table.id.asc().nullsLast().op('uuid_ops'))
-            .where(sql`archived = false`),
-        // Критичные проверки безопасности
-        foreignKey({
-            columns: [table.parentId],
-            foreignColumns: [table.id],
-            name: 'block_parent_id_block_id_fk',
-        }).onDelete('set null'),
-        foreignKey({
-            columns: [table.userId],
-            foreignColumns: [user.id],
-            name: 'block_user_id_user_id_fk',
-        }).onDelete('cascade'),
+        check('seat_number_valid', sql`"seat_number" >= 1 AND "seat_number" <= 30`),
     ],
 )
 
-// Минимальные database таблицы для будущего расширения
-export const database = pgTable(
-    'database',
+// Настройки Совета агентов
+export const councilSettingsTable = pgTable(
+    'council_settings',
     {
         id: uuid().defaultRandom().primaryKey().notNull(),
-        blockId: uuid('block_id').notNull(),
+        userId: text('user_id')
+            .notNull()
+            .references(() => user.id, { onDelete: 'cascade' }),
+        responseLength: text('response_length').default('medium').notNull(),
+        maxWords: integer('max_words'),
+        conflictLevel: text('conflict_level').default('neutral').notNull(),
+        customInstructions: text('custom_instructions'),
+        layerPriorities: jsonb('layer_priorities').default({
+            council: 1,
+            context: 2,
+            agent: 3,
+            history: 4,
+            custom: 5,
+        }).notNull(),
+        createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' })
+            .defaultNow()
+            .notNull(),
+        updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' })
+            .defaultNow()
+            .notNull(),
+    },
+    (table) => [
+        unique('council_settings_user_unique').on(table.userId),
+        index('council_settings_user_idx').using(
+            'btree',
+            table.userId.asc().nullsLast().op('text_ops'),
+        ),
+    ],
+)
+
+export const groups = pgTable(
+    'groups',
+    {
+        id: uuid().defaultRandom().primaryKey().notNull(),
+        userId: text('user_id')
+            .notNull()
+            .references(() => user.id, { onDelete: 'cascade' }),
         title: text().notNull(),
         description: text(),
-        createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' })
-            .defaultNow()
-            .notNull(),
-        updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' })
-            .defaultNow()
-            .notNull(),
-    },
-    (table) => [
-        index('database_block_id_idx').using(
-            'btree',
-            table.blockId.asc().nullsLast().op('uuid_ops'),
-        ),
-        unique('database_block_id_unique').on(table.blockId),
-        foreignKey({
-            columns: [table.blockId],
-            foreignColumns: [block.id],
-            name: 'database_block_id_block_id_fk',
-        }).onDelete('cascade'),
-    ],
-)
-
-export const databaseProperty = pgTable(
-    'database_property',
-    {
-        id: uuid().defaultRandom().primaryKey().notNull(),
-        databaseId: uuid('database_id').notNull(),
-        name: text().notNull(),
-        propType: text('prop_type').notNull(),
-        config: jsonb().default({}),
+        color: text().default('#4A90E2').notNull(),
+        icon: text().default('🌍'),
+        metadata: jsonb().default({}),
+        layoutData: jsonb('layout_data').default({}),
         position: integer().default(1024).notNull(),
         createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' })
             .defaultNow()
@@ -371,45 +437,35 @@ export const databaseProperty = pgTable(
             .notNull(),
     },
     (table) => [
-        index('database_property_database_id_idx').using(
+        index('groups_user_idx').using(
             'btree',
-            table.databaseId.asc().nullsLast().op('uuid_ops'),
+            table.userId.asc().nullsLast().op('text_ops'),
         ),
-        index('database_property_position_idx').using(
+        index('groups_position_idx').using(
             'btree',
-            table.databaseId.asc().nullsLast().op('uuid_ops'),
+            table.userId.asc().nullsLast().op('text_ops'),
             table.position.asc().nullsLast().op('int4_ops'),
         ),
-        // Безопасность и уникальность
-        unique('database_property_database_name_unique').on(table.databaseId, table.name),
-        unique('database_property_database_position_unique').on(
-            table.databaseId,
-            table.position,
+        index('groups_layout_data_gin_idx').using(
+            'gin',
+            table.layoutData.asc().nullsLast().op('jsonb_ops'),
         ),
-        check('database_property_position_positive', sql`${table.position} > 0`),
-        check(
-            'database_property_type_valid',
-            sql`${table.propType} IN ('title','text','number','select','multi_select','date','checkbox','url','email','phone','formula')`,
-        ),
-        foreignKey({
-            columns: [table.databaseId],
-            foreignColumns: [database.id],
-            name: 'database_property_database_id_database_id_fk',
-        }).onDelete('cascade'),
     ],
 )
 
-// View system - отделяем контент от представления
-export const view = pgTable(
-    'view',
+export const workplace = pgTable(
+    'workplace',
     {
         id: uuid().defaultRandom().primaryKey().notNull(),
-        parentDatabaseId: uuid('parent_database_id'),
-        viewType: text('view_type').notNull(), // 'table' | 'board' | 'calendar' | 'gallery' | 'list' | 'timeline' | 'map' | 'flow' | 'grid'
-        name: text().notNull(),
-        config: jsonb().default({}), // фильтры, сортировка, группировка, настройки представления
-        position: integer().default(1024).notNull(),
+        userId: text('user_id')
+            .notNull()
+            .references(() => user.id, { onDelete: 'cascade' }),
+        title: text().default('Мой воркспейс').notNull(),
+        description: text(),
+        layoutData: jsonb('layout_data').default({}),
+        content: jsonb().default({}),
         isDefault: boolean('is_default').default(false).notNull(),
+        archived: boolean().default(false).notNull(),
         createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' })
             .defaultNow()
             .notNull(),
@@ -418,114 +474,103 @@ export const view = pgTable(
             .notNull(),
     },
     (table) => [
-        index('view_parent_database_idx').using(
+        index('workplace_user_idx').using(
             'btree',
-            table.parentDatabaseId.asc().nullsLast().op('uuid_ops'),
+            table.userId.asc().nullsLast().op('text_ops'),
         ),
-        index('view_type_idx').using(
-            'btree',
-            table.viewType.asc().nullsLast().op('text_ops'),
-        ),
-        index('view_config_gin_idx').using('gin', table.config),
-        // Уникальность позиций в пределах parent database
-        unique('view_parent_position_unique').on(table.parentDatabaseId, table.position),
-        // Проверки валидности
-        check('view_position_positive', sql`${table.position} > 0`),
-        check(
-            'view_type_valid',
-            sql`${table.viewType} IN ('table','board','calendar','gallery','list','timeline','map','flow','grid')`,
-        ),
-        foreignKey({
-            columns: [table.parentDatabaseId],
-            foreignColumns: [database.id],
-            name: 'view_parent_database_id_database_id_fk',
-        }).onDelete('cascade'),
+        index('workplace_user_default_idx')
+            .using('btree', table.userId.asc().nullsLast().op('text_ops'))
+            .where(sql`(is_default = true)`),
     ],
 )
 
-export const viewBlock = pgTable(
-    'view_block',
-    {
-        viewId: uuid('view_id').notNull(),
-        blockId: uuid('block_id').notNull(),
-        layout: jsonb().default({}), // координаты, размеры, цвет, видимость и другие view-специфичные данные
-        createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' })
-            .defaultNow()
-            .notNull(),
-        updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' })
-            .defaultNow()
-            .notNull(),
-    },
-    (table) => [
-        // Составной первичный ключ
-        { primaryKey: true, columns: [table.viewId, table.blockId] },
-        index('view_block_view_id_idx').using(
-            'btree',
-            table.viewId.asc().nullsLast().op('uuid_ops'),
-        ),
-        index('view_block_block_id_idx').using(
-            'btree',
-            table.blockId.asc().nullsLast().op('uuid_ops'),
-        ),
-        index('view_block_layout_gin_idx').using('gin', table.layout),
-        foreignKey({
-            columns: [table.viewId],
-            foreignColumns: [view.id],
-            name: 'view_block_view_id_view_id_fk',
-        }).onDelete('cascade'),
-        foreignKey({
-            columns: [table.blockId],
-            foreignColumns: [block.id],
-            name: 'view_block_block_id_block_id_fk',
-        }).onDelete('cascade'),
-    ],
-)
+export const moduleTypeEnum = pgEnum('module_type', [
+    'N8nConnector',
+    'ToDoList',
+    'Custom',
+    'Agent', // Полноценный агент со всеми настройками
+])
 
-export const unitBlockRoles = pgTable(
-    'unit_block_roles',
+export const licenseTypeEnum = pgEnum('license_type', [
+    'open',
+    'closed',
+])
+
+export const storeModules = pgTable(
+    'store_modules',
     {
         id: uuid().defaultRandom().primaryKey().notNull(),
-        unitId: text('unit_id').notNull(),
-        blockId: uuid('block_id').notNull(),
-        roleTitle: text('role_title'),
-        managerUnitId: text('manager_unit_id'),
-        isActive: boolean('is_active').default(true).notNull(),
-        isChatEnabled: boolean('is_chat_enabled').default(false).notNull(),
-        hiredAt: timestamp('hired_at', { withTimezone: true, mode: 'string' })
+        authorId: text('author_id')
+            .notNull()
+            .references(() => user.id, { onDelete: 'cascade' }),
+        name: text().notNull(),
+        description: text(),
+        moduleType: moduleTypeEnum('module_type').notNull(),
+        config: jsonb().default({}).notNull(),
+        licenseType: licenseTypeEnum('license_type').default('open').notNull(),
+        price: numeric(),
+        downloads: integer().default(0).notNull(),
+        isPublished: boolean('is_published').default(false).notNull(),
+        createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' })
             .defaultNow()
             .notNull(),
-        firedAt: timestamp('fired_at', { withTimezone: true, mode: 'string' }),
-        createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' })
+        updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' })
             .defaultNow()
             .notNull(),
     },
     (table) => [
-        index('unit_block_roles_unit_id_idx').using(
+        index('store_modules_author_idx').using(
             'btree',
-            table.unitId.asc().nullsLast().op('text_ops'),
+            table.authorId.asc().nullsLast().op('text_ops'),
         ),
-        index('unit_block_roles_block_id_idx').using(
+        index('store_modules_type_idx').using(
             'btree',
-            table.blockId.asc().nullsLast().op('uuid_ops'),
+            table.moduleType.asc().nullsLast().op('enum_ops'),
         ),
-        index('unit_block_roles_active_idx').using(
+        index('store_modules_published_idx')
+            .using('btree', table.id.asc().nullsLast().op('uuid_ops'))
+            .where(sql`(is_published = true)`),
+    ],
+)
+
+export const mcpAccessTokens = pgTable(
+    'mcp_access_tokens',
+    {
+        id: uuid().defaultRandom().primaryKey().notNull(),
+        token: text().notNull().unique(),
+        userId: text('user_id')
+            .notNull()
+            .references(() => user.id, { onDelete: 'cascade' }),
+        agentId: uuid('agent_id')
+            .notNull()
+            .references(() => block.id, { onDelete: 'cascade' }),
+        todoListId: text('todo_list_id').notNull(),
+        isActive: boolean('is_active').default(true).notNull(),
+        expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'string' }),
+        usageCount: integer('usage_count').default(0).notNull(),
+        lastUsedAt: timestamp('last_used_at', { withTimezone: true, mode: 'string' }),
+        createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' })
+            .defaultNow()
+            .notNull(),
+        updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' })
+            .defaultNow()
+            .notNull(),
+    },
+    (table) => [
+        index('mcp_tokens_user_idx').using(
             'btree',
-            table.isActive.asc().nullsLast().op('bool_ops'),
+            table.userId.asc().nullsLast().op('text_ops'),
         ),
-        foreignKey({
-            columns: [table.unitId],
-            foreignColumns: [unit.id],
-            name: 'unit_block_roles_unit_id_unit_id_fk',
-        }).onDelete('cascade'),
-        foreignKey({
-            columns: [table.blockId],
-            foreignColumns: [block.id],
-            name: 'unit_block_roles_block_id_block_id_fk',
-        }).onDelete('cascade'),
-        foreignKey({
-            columns: [table.managerUnitId],
-            foreignColumns: [unit.id],
-            name: 'unit_block_roles_manager_unit_id_unit_id_fk',
-        }).onDelete('set null'),
+        index('mcp_tokens_agent_idx').using(
+            'btree',
+            table.agentId.asc().nullsLast().op('uuid_ops'),
+        ),
+        index('mcp_tokens_token_idx').using(
+            'btree',
+            table.token.asc().nullsLast().op('text_ops'),
+        ),
+        index('mcp_tokens_active_idx')
+            .using('btree', table.token.asc().nullsLast().op('text_ops'))
+            .where(sql`(is_active = true)`),
     ],
 )

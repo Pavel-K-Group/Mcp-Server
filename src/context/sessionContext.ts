@@ -50,10 +50,10 @@ export function createSessionContext(
     sessionContexts.set(sessionId, context)
     lastActiveSessionId = sessionId
     
-    console.log(`📦 Session context created ${sessionId}:`, {
-        todoListId: todoListId || 'not set',
-        agentId: agentId || 'not set',
-        userId: userId || 'not set',
+    console.log(`📦 Session created [${sessionId.slice(0, 8)}...]:`, {
+        todoListId: todoListId?.slice(0, 8) || 'none',
+        agentId: agentId?.slice(0, 8) || 'none',
+        userId: userId?.slice(0, 8) || 'none',
     })
     
     return context
@@ -72,17 +72,10 @@ export function getSessionContext(sessionId: string): SessionContext | null {
  */
 export function getCurrentSessionContext(): SessionContext | null {
     if (!lastActiveSessionId) {
-        console.warn('⚠️ Нет активной сессии')
         return null
     }
     
-    const context = sessionContexts.get(lastActiveSessionId)
-    if (!context) {
-        console.warn(`⚠️ Контекст сессии ${lastActiveSessionId} не найден`)
-        return null
-    }
-    
-    return context
+    return sessionContexts.get(lastActiveSessionId) || null
 }
 
 /**
@@ -98,8 +91,6 @@ export function removeSessionContext(sessionId: string): void {
             ? remainingSessions[remainingSessions.length - 1] 
             : null
     }
-    
-    console.log(`🗑️ Удален контекст сессии ${sessionId}`)
 }
 
 /**

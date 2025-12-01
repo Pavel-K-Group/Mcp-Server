@@ -4,7 +4,6 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import express, { Request, Response } from 'express'
 import cors from 'cors'
@@ -19,8 +18,8 @@ import {
 
 // Create an MCP server
 const server = new McpServer({
-    name: 'Universal MCP Server',
-    version: '2.0.0',
+    name: 'Timelix MCP Server',
+    version: '2.1.0',
 })
 
 // Автоматически загружаем и регистрируем все инструменты
@@ -40,8 +39,7 @@ async function registerAllTools() {
 const app = express()
 const PORT = Number(process.env.PORT) || 8080
 
-// НЕ используем express.json() глобально — это ломает SSE!
-// JSON парсинг применяется только к /mcp endpoint ниже
+// JSON парсинг применяется только к /mcp endpoint
 
 // Настраиваем CORS
 app.use(
@@ -54,30 +52,25 @@ app.use(
 )
 
 // Обслуживаем главную страницу
-app.get('/', (req, res) => {
+app.get('/', (_req, res) => {
     res.json({
-        name: 'Universal MCP Server',
-        version: '2.0.0',
+        name: 'Timelix MCP Server',
+        version: '2.1.0',
         status: 'running',
-        endpoints: {
-            // Новый стабильный endpoint (Streamable HTTP)
-            streamableHttp: '/mcp',
-            // Legacy endpoint (SSE) - для обратной совместимости
-            sse: '/sse',
-        },
-        docs: {
-            streamableHttp: 'POST/GET/DELETE /mcp - рекомендуемый, стабильный',
-            sse: 'GET /sse + POST /message - legacy, для старых клиентов',
-        }
+        endpoint: '/mcp',
+        protocol: 'Streamable HTTP (MCP)',
     })
 })
 
 // ============================================================================
-// 🚀 НОВЫЙ ENDPOINT: Streamable HTTP (рекомендуемый)
+// 🚀 MCP ENDPOINT: Streamable HTTP
 // ============================================================================
 
-// Хранилище транспортов Streamable HTTP по сессиям
-const streamableTransports = new Map<string, StreamableHTTPServerTransport>()
+// Хранилище транспортов по сессиям
+const transports = new Map<string, StreamableHTTPServerTransport>()
+
+// Таймаут для запросов (30 секунд)
+const REQUEST_TIMEOUT_MS = 30000
 
 /**
  * Парсит query params из URL для контекста сессии
@@ -90,7 +83,19 @@ function parseSessionParams(req: Request) {
 }
 
 /**
- * Streamable HTTP endpoint - обрабатывает все методы (GET, POST, DELETE)
+ * Обёртка для выполнения с таймаутом
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, operation: string): Promise<T> {
+    return Promise.race([
+        promise,
+        new Promise<T>((_, reject) => 
+            setTimeout(() => reject(new Error(`Timeout: ${operation} took longer than ${ms}ms`)), ms)
+        )
+    ])
+}
+
+/**
+ * MCP Endpoint - обрабатывает все методы (GET, POST, DELETE)
  * 
  * Подключение:
  * - POST /mcp?todoListId=XXX&agentId=YYY&userId=ZZZ
@@ -98,158 +103,101 @@ function parseSessionParams(req: Request) {
  *            Content-Type: application/json
  */
 app.all('/mcp', express.json(), async (req: Request, res: Response) => {
-    // Получаем session ID из заголовка (если есть)
     const sessionId = req.headers['mcp-session-id'] as string | undefined
+    const requestStart = Date.now()
 
-    // Если есть существующая сессия - используем её транспорт
-    if (sessionId && streamableTransports.has(sessionId)) {
-        const transport = streamableTransports.get(sessionId)!
-        setActiveSession(sessionId)
-        await transport.handleRequest(req, res, req.body)
-        return
-    }
+    try {
+        // Если есть существующая сессия - используем её транспорт
+        if (sessionId && transports.has(sessionId)) {
+            const transport = transports.get(sessionId)!
+            setActiveSession(sessionId)
+            
+            console.log(`📨 [${sessionId.slice(0, 8)}] ${req.method} request received`)
+            
+            await withTimeout(
+                transport.handleRequest(req, res, req.body),
+                REQUEST_TIMEOUT_MS,
+                'handleRequest'
+            )
+            
+            console.log(`✅ [${sessionId.slice(0, 8)}] Request completed in ${Date.now() - requestStart}ms`)
+            return
+        }
 
-    // Для новых сессий - создаём транспорт
-    if (req.method === 'POST' || req.method === 'GET') {
-        const { todoListId, agentId, userId } = parseSessionParams(req)
-        
-        console.log('📡 New Streamable HTTP connection:', {
-            method: req.method,
-            todoListId: todoListId || 'not set',
-            agentId: agentId || 'not set',
-            userId: userId || 'not set',
-        })
+        // Для новых сессий - создаём транспорт
+        if (req.method === 'POST' || req.method === 'GET') {
+            const { todoListId, agentId, userId } = parseSessionParams(req)
+            
+            console.log(`📡 New connection: method=${req.method}, user=${userId?.slice(0, 8) || 'none'}, agent=${agentId?.slice(0, 8) || 'none'}`)
 
-        try {
             const transport = new StreamableHTTPServerTransport({
                 sessionIdGenerator: () => randomUUID(),
                 onsessioninitialized: (newSessionId) => {
-                    // Сохраняем транспорт по session ID
-                    streamableTransports.set(newSessionId, transport)
-                    
-                    // Создаём контекст сессии
+                    transports.set(newSessionId, transport)
                     createSessionContext(newSessionId, todoListId, agentId, userId)
-                    
-                    console.log(`✅ Streamable HTTP сессия создана: ${newSessionId}`)
+                    console.log(`✅ Session created: ${newSessionId.slice(0, 8)}... | Active sessions: ${transports.size}`)
                 }
             })
 
             // Обработка закрытия транспорта
             transport.onclose = () => {
                 if (transport.sessionId) {
-                    streamableTransports.delete(transport.sessionId)
+                    console.log(`🔌 Session closed: ${transport.sessionId.slice(0, 8)}... | Remaining: ${transports.size - 1}`)
+                    transports.delete(transport.sessionId)
                     removeSessionContext(transport.sessionId)
-                    console.log(`❌ Streamable HTTP сессия закрыта: ${transport.sessionId}`)
                 }
             }
 
             // Подключаем сервер к транспорту
             await server.connect(transport)
             
-            // Обрабатываем запрос
-            await transport.handleRequest(req, res, req.body)
+            // Обрабатываем запрос с таймаутом
+            await withTimeout(
+                transport.handleRequest(req, res, req.body),
+                REQUEST_TIMEOUT_MS,
+                'handleRequest'
+            )
             
-        } catch (error) {
-            console.error('❌ Ошибка Streamable HTTP:', error)
-            if (!res.headersSent) {
-                res.status(500).json({ 
-                    jsonrpc: '2.0',
-                    error: { 
-                        code: -32603, 
-                        message: 'Internal server error' 
-                    },
-                    id: null
-                })
-            }
+            console.log(`✅ Initial request completed in ${Date.now() - requestStart}ms`)
+            return
         }
-        return
-    }
 
-    // Неизвестный метод без session ID
-    res.status(400).json({
-        jsonrpc: '2.0',
-        error: {
-            code: -32600,
-            message: 'Bad Request: Missing mcp-session-id header'
-        },
-        id: null
-    })
-})
+        // DELETE для закрытия сессии
+        if (req.method === 'DELETE' && sessionId) {
+            console.log(`🗑️ DELETE session: ${sessionId.slice(0, 8)}...`)
+            const transport = transports.get(sessionId)
+            if (transport) {
+                await transport.handleRequest(req, res, req.body)
+            }
+            return
+        }
 
-// ============================================================================
-// 📺 LEGACY ENDPOINT: SSE (для обратной совместимости)
-// ============================================================================
-
-// Глобальная переменная для хранения SSE транспортов по сессиям
-const sseTransports = new Map<string, SSEServerTransport>()
-
-/**
- * SSE endpoint для MCP - для получения сообщений от сервера
- * Поддерживает query params: todoListId, agentId, userId
- * Пример: /sse?todoListId=XXX&agentId=YYY&userId=ZZZ
- * 
- * ⚠️ LEGACY: Используйте /mcp для новых интеграций
- */
-app.get('/sse', async (req, res) => {
-    const { todoListId, agentId, userId } = parseSessionParams(req)
-    
-    console.log('📡 [LEGACY] New SSE connection:', {
-        todoListId: todoListId || 'not set',
-        agentId: agentId || 'not set',
-        userId: userId || 'not set',
-    })
-
-    try {
-        const transport = new SSEServerTransport('/message', res)
-        const sessionId = `sse_${Date.now()}_${Math.random().toString(36).substring(7)}`
-        sseTransports.set(sessionId, transport)
-        
-        // Создаем контекст сессии с параметрами из query
-        createSessionContext(sessionId, todoListId, agentId, userId)
-
-        // Удаляем транспорт и контекст при закрытии соединения
-        res.on('close', () => {
-            sseTransports.delete(sessionId)
-            removeSessionContext(sessionId)
-            console.log(`❌ [LEGACY] SSE соединение ${sessionId} закрыто`)
-        })
-
-        await server.connect(transport)
-        console.log(`✅ [LEGACY] MCP сервер подключен через SSE (сессия: ${sessionId})`)
-    } catch (error) {
-        console.error('❌ [LEGACY] Ошибка подключения SSE:', error)
-        res.status(500).json({ error: 'Failed to establish SSE connection' })
-    }
-})
-
-/**
- * POST endpoint для обработки сообщений от SSE клиента
- * 
- * ⚠️ LEGACY: Используйте /mcp для новых интеграций
- */
-app.post('/message', async (req, res) => {
-    console.log('🔄 [LEGACY] MCP протокол: получен запрос от клиента')
-
-    try {
-        // Ищем активный транспорт для обработки сообщения
-        const transportEntries = Array.from(sseTransports.entries())
-        
-        if (transportEntries.length === 0) {
-            return res.status(400).json({
-                error: 'No active SSE connection found',
+        // Неизвестный метод без session ID
+        console.warn(`⚠️ Bad request: ${req.method} without session ID`)
+        if (!res.headersSent) {
+            res.status(400).json({
+                jsonrpc: '2.0',
+                error: { code: -32600, message: 'Bad Request: Missing mcp-session-id header' },
+                id: null
             })
         }
-
-        // Используем последний активный транспорт и устанавливаем его сессию как активную
-        const [sessionId, activeTransport] = transportEntries[transportEntries.length - 1]
-        setActiveSession(sessionId)
-
-        // Обрабатываем POST сообщение через активный транспорт
-        await activeTransport.handlePostMessage(req, res)
-        console.log('✅ [LEGACY] MCP протокол: запрос обработан')
     } catch (error) {
-        console.error('❌ [LEGACY] Ошибка обработки MCP запроса:', error)
-        res.status(500).json({ error: 'Failed to handle POST message' })
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+        const errorStack = error instanceof Error ? error.stack : undefined
+        
+        console.error(`❌ MCP Error [${sessionId?.slice(0, 8) || 'no-session'}]: ${errorMessage}`)
+        if (errorStack) {
+            console.error(`   Stack: ${errorStack.split('\n').slice(1, 3).join(' | ')}`)
+        }
+        console.error(`   Duration: ${Date.now() - requestStart}ms`)
+        
+        if (!res.headersSent) {
+            res.status(500).json({ 
+                jsonrpc: '2.0',
+                error: { code: -32603, message: errorMessage },
+                id: null
+            })
+        }
     }
 })
 
@@ -258,41 +206,42 @@ app.post('/message', async (req, res) => {
 // ============================================================================
 
 async function startServer() {
-    // Проверяем подключение к базе данных
-    console.log('🔄 Проверяем подключение к базе данных...')
-    const dbConnected = await testConnection()
+    try {
+        // Проверяем подключение к базе данных
+        const dbConnected = await testConnection()
 
-    if (!dbConnected) {
-        console.warn(
-            '⚠️  База данных недоступна, но сервер продолжит работу без БД инструментов',
-        )
-    }
-
-    await registerAllTools()
-
-    // В Docker контейнере всегда используем 0.0.0.0, иначе localhost
-    const HOST =
-        process.env.DOCKER_ENV === 'true' || process.env.NODE_ENV === 'production'
-            ? '0.0.0.0'
-            : 'localhost'
-
-    app.listen(PORT, HOST, () => {
-        console.log('')
-        console.log('═══════════════════════════════════════════════════════════')
-        console.log(`🚀 Universal MCP Server v2.0.0 запущен на http://${HOST}:${PORT}`)
-        console.log('═══════════════════════════════════════════════════════════')
-        console.log('')
-        console.log('📡 Endpoints:')
-        console.log(`   🆕 Streamable HTTP: http://${HOST}:${PORT}/mcp`)
-        console.log(`      └─ POST/GET/DELETE, стабильный, рекомендуемый`)
-        console.log(`   📺 Legacy SSE:      http://${HOST}:${PORT}/sse`)
-        console.log(`      └─ GET + POST /message, для старых клиентов`)
-        console.log('')
-        if (dbConnected) {
-            console.log(`💾 База данных подключена и готова к работе`)
+        if (!dbConnected) {
+            console.warn('⚠️ База данных недоступна')
         }
-        console.log('')
-    })
+
+        await registerAllTools()
+
+        // В Docker контейнере всегда используем 0.0.0.0, иначе localhost
+        const HOST =
+            process.env.DOCKER_ENV === 'true' || process.env.NODE_ENV === 'production'
+                ? '0.0.0.0'
+                : 'localhost'
+
+        app.listen(PORT, HOST, () => {
+            console.log('')
+            console.log(`🚀 Timelix MCP Server v2.1.0`)
+            console.log(`   Endpoint: http://${HOST}:${PORT}/mcp`)
+            console.log(`   Database: ${dbConnected ? '✅' : '❌'}`)
+            console.log('')
+        })
+    } catch (error) {
+        console.error('❌ Failed to start server:', error)
+        process.exit(1)
+    }
 }
 
-startServer().catch(console.error)
+// Глобальная обработка необработанных ошибок
+process.on('uncaughtException', (error) => {
+    console.error('❌ Uncaught Exception:', error.message)
+})
+
+process.on('unhandledRejection', (reason) => {
+    console.error('❌ Unhandled Rejection:', reason)
+})
+
+startServer()

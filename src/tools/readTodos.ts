@@ -34,7 +34,7 @@ async function readTodos(input: ReadTodosInput) {
         throw new Error('Agent not identified. Session agentId is required.')
     }
     
-    console.log(`📖 readTodos: userId=${userId}, parentId=${parentId}, agentId=${agentId}`)
+    console.log(`📖 readTodos: userId=${userId?.slice(0, 8)}, parentId=${parentId?.slice(0, 8)}, agentId=${agentId?.slice(0, 8)}`)
 
     try {
         // Получаем все задачи компании

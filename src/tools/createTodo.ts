@@ -32,7 +32,7 @@ async function createTodo(input: CreateTodoInput) {
         throw new Error('Session not configured. todoListId is required.')
     }
     
-    console.log(`✏️ createTodo: "${input.title}", userId=${userId}, parentId=${parentId}, agentId=${agentId || 'not set'}`)
+    console.log(`✏️ createTodo: title="${input.title?.slice(0, 30)}...", user=${userId?.slice(0, 8)}, parent=${parentId?.slice(0, 8)}, agent=${agentId?.slice(0, 8) || 'none'}`)
 
     try {
         // Подготавливаем контент для JSONB поля

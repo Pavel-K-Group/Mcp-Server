@@ -30,7 +30,7 @@ async function updateTodo(input: UpdateTodoInput) {
         throw new Error('User not authenticated. Session userId is required.')
     }
     
-    console.log(`📝 updateTodo: todoId=${input.todoId}, userId=${userId}, agentId=${agentId || 'not set'}`)
+    console.log(`📝 updateTodo: todo=${input.todoId?.slice(0, 8)}, user=${userId?.slice(0, 8)}, agent=${agentId?.slice(0, 8) || 'none'}`)
 
     try {
         // Проверяем существование задачи

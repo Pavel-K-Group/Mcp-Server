@@ -4,6 +4,12 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { randomUUID } from 'node:crypto'
 import { getServer } from './server.js'
+import { testConnection } from './database/client.js'
+import { 
+  createSessionContext, 
+  removeSessionContext, 
+  setActiveSession 
+} from './context/sessionContext.js'
 
 const app = express()
 app.use(express.json())
@@ -21,78 +27,73 @@ app.get('/', (_req, res) => {
   })
 })
 
+/**
+ * Парсит query params для контекста сессии
+ */
+function parseSessionParams(req: Request) {
+  const todoListId = typeof req.query.todoListId === 'string' ? req.query.todoListId : null
+  const agentId = typeof req.query.agentId === 'string' ? req.query.agentId : null
+  const userId = typeof req.query.userId === 'string' ? req.query.userId : null
+  return { todoListId, agentId, userId }
+}
+
 app.post('/mcp', async (req: Request, res: Response) => {
-  console.log('Received MCP request:', req.body)
+  console.log('📨 MCP POST request')
   try {
-    // Check for existing session ID
     const sessionId = req.headers['mcp-session-id'] as string | undefined
-    let transport: StreamableHTTPServerTransport
 
     if (sessionId && transports[sessionId]) {
-      // Reuse existing transport
-      transport = transports[sessionId]
+      // Существующая сессия
+      const transport = transports[sessionId]
+      setActiveSession(sessionId)
+      await transport.handleRequest(req, res, req.body)
     } else if (!sessionId && isInitializeRequest(req.body)) {
-      // New initialization request
-      transport = new StreamableHTTPServerTransport({
+      // Новая сессия
+      const { todoListId, agentId, userId } = parseSessionParams(req)
+      
+      console.log(`📡 New connection: user=${userId?.slice(0, 8) || 'none'}, agent=${agentId?.slice(0, 8) || 'none'}, todoList=${todoListId?.slice(0, 8) || 'none'}`)
+
+      const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
-        onsessioninitialized: (sessionId) => {
-          // Store the transport by session ID when session is initialized
-          // This avoids race conditions where requests might come in before the session is stored
-          console.log(`Session initialized with ID: ${sessionId}`)
-          transports[sessionId] = transport
+        onsessioninitialized: (newSessionId) => {
+          transports[newSessionId] = transport
+          createSessionContext(newSessionId, todoListId, agentId, userId)
+          console.log(`✅ Session created: ${newSessionId.slice(0, 8)}... | Active: ${Object.keys(transports).length}`)
         },
       })
 
-      // Set up onclose handler to clean up transport when closed
       transport.onclose = () => {
         const sid = transport.sessionId
         if (sid && transports[sid]) {
-          console.log(
-            `Transport closed for session ${sid}, removing from transports map`,
-          )
+          console.log(`🔌 Session closed: ${sid.slice(0, 8)}...`)
+          removeSessionContext(sid)
           delete transports[sid]
         }
       }
 
-      // Connect the transport to the MCP server BEFORE handling the request
-      // so responses can flow back through the same transport
       const server = getServer()
       await server.connect(transport)
-
       await transport.handleRequest(req, res, req.body)
-      return // Already handled
     } else {
-      // Invalid request - no session ID or not initialization request
       res.status(400).json({
         jsonrpc: '2.0',
-        error: {
-          code: -32000,
-          message: 'Bad Request: No valid session ID provided',
-        },
+        error: { code: -32000, message: 'Bad Request: No valid session ID provided' },
         id: null,
       })
-      return
     }
-
-    // Handle the request with existing transport - no need to reconnect
-    // The existing transport is already connected to the server
-    await transport.handleRequest(req, res, req.body)
   } catch (error) {
-    console.error('Error handling MCP request:', error)
+    console.error('❌ MCP Error:', error)
     if (!res.headersSent) {
       res.status(500).json({
         jsonrpc: '2.0',
-        error: {
-          code: -32603,
-          message: 'Internal server error',
-        },
+        error: { code: -32603, message: 'Internal server error' },
         id: null,
       })
     }
   }
 })
 
-// Handle GET requests for SSE streams (using built-in support from StreamableHTTP)
+// GET - SSE streams
 app.get('/mcp', async (req: Request, res: Response) => {
   const sessionId = req.headers['mcp-session-id'] as string | undefined
   if (!sessionId || !transports[sessionId]) {
@@ -100,19 +101,17 @@ app.get('/mcp', async (req: Request, res: Response) => {
     return
   }
 
-  // Check for Last-Event-ID header for resumability
   const lastEventId = req.headers['last-event-id'] as string | undefined
   if (lastEventId) {
-    console.log(`Client reconnecting with Last-Event-ID: ${lastEventId}`)
-  } else {
-    console.log(`Establishing new SSE stream for session ${sessionId}`)
+    console.log(`🔄 Reconnecting with Last-Event-ID: ${lastEventId}`)
   }
 
+  setActiveSession(sessionId)
   const transport = transports[sessionId]
   await transport.handleRequest(req, res)
 })
 
-// Handle DELETE requests for session termination (according to MCP spec)
+// DELETE - session termination
 app.delete('/mcp', async (req: Request, res: Response) => {
   const sessionId = req.headers['mcp-session-id'] as string | undefined
   if (!sessionId || !transports[sessionId]) {
@@ -120,7 +119,7 @@ app.delete('/mcp', async (req: Request, res: Response) => {
     return
   }
 
-  console.log(`Received session termination request for session ${sessionId}`)
+  console.log(`🗑️ Session termination: ${sessionId.slice(0, 8)}...`)
 
   try {
     const transport = transports[sessionId]
@@ -133,32 +132,46 @@ app.delete('/mcp', async (req: Request, res: Response) => {
   }
 })
 
-// Start the server
+// Start server
 const PORT = Number(process.env.PORT) || 8080
 const HOST = process.env.NODE_ENV === 'production' ? '0.0.0.0' : 'localhost'
 
-app.listen(PORT, HOST, () => {
-  console.log(`🚀 Timelix MCP Server listening on http://${HOST}:${PORT}`)
-  console.log(`   Endpoint: /mcp`)
-})
+async function start() {
+  // Проверяем БД
+  const dbConnected = await testConnection()
+  if (!dbConnected) {
+    console.warn('⚠️ Database not connected')
+  }
 
-// Handle server shutdown
+  app.listen(PORT, HOST, () => {
+    console.log('')
+    console.log(`🚀 Timelix MCP Server v1.0.0`)
+    console.log(`   Endpoint: http://${HOST}:${PORT}/mcp`)
+    console.log(`   Database: ${dbConnected ? '✅' : '❌'}`)
+    console.log('')
+  })
+}
+
+start()
+
+// Graceful shutdown
 process.on('SIGINT', async () => {
-  console.log('Shutting down server...')
-
-  // Close all active transports to properly clean up resources
+  console.log('Shutting down...')
   for (const sessionId in transports) {
     try {
-      console.log(`Closing transport for session ${sessionId}`)
       await transports[sessionId].close()
       delete transports[sessionId]
     } catch (error) {
-      console.error(
-        `Error closing transport for session ${sessionId}: ${error}`,
-      )
+      console.error(`Error closing session ${sessionId}:`, error)
     }
   }
-  console.log('Server shutdown complete')
   process.exit(0)
 })
 
+process.on('uncaughtException', (error) => {
+  console.error('❌ Uncaught Exception:', error.message)
+})
+
+process.on('unhandledRejection', (reason) => {
+  console.error('❌ Unhandled Rejection:', reason)
+})

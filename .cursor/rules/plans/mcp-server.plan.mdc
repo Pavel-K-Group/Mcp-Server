@@ -1,0 +1,75 @@
+<!-- b6904e66-5f0e-48a5-a38b-97e0febcea5b c379f6e8-8096-46d4-bc47-93a348d02f68 -->
+# Переключение на новый шаблон (с учётом деплоя)
+
+## Что делаем
+
+Копируем 4 файла из `example/` в `src/` с правками для Docker/продакшена:
+
+### 1. src/index.ts (из example/index.ts)
+
+Правки для деплоя:
+
+```typescript
+import cors from 'cors'
+
+app.use(cors({ origin: '*' }))
+
+const PORT = Number(process.env.PORT) || 8080
+const HOST = process.env.NODE_ENV === 'production' ? '0.0.0.0' : 'localhost'
+
+app.listen(PORT, HOST, () => {
+  console.log(`MCP Server listening on http://${HOST}:${PORT}`)
+})
+```
+
+### 2. src/server.ts (из example/server.ts)
+
+- Название: `name: 'Timelix MCP'`
+
+### 3. src/tools-register.ts (из example/tools.ts)
+
+Простые тестовые инструменты:
+
+```typescript
+server.tool('ping', 'Проверка связи', {}, async () => ({
+  content: [{ type: 'text', text: 'pong' }]
+}))
+```
+
+### 4. src/prompts.ts (из example/prompts.ts)
+
+```typescript
+server.prompt('dogs', 'Информация о собачках', {}, () => ({
+  messages: [{ role: 'user', content: { type: 'text', text: 'Собачки красные' }}]
+}))
+```
+
+### 5. package.json
+
+```json
+"scripts": {
+  "dev": "tsx watch src/index.ts",
+  "build": "tsc",
+  "start": "node dist/index.js"
+}
+```
+
+## Docker совместимость
+
+- `Dockerfile` - уже есть, работает с `dist/`
+- `docker-compose.yml` - уже настроен
+- `PORT` - из env (8080 по умолчанию)
+- `HOST` - 0.0.0.0 в production
+- `CORS` - включён
+
+## Что остается нетронутым
+
+Весь старый код на месте для постепенного возврата функционала.
+
+### To-dos
+
+- [ ] src/index.ts из example + PORT/HOST/CORS для Docker
+- [ ] src/server.ts из example
+- [ ] src/tools-register.ts с ping
+- [ ] src/prompts.ts с 'собачки красные'
+- [ ] package.json scripts на src/index.ts

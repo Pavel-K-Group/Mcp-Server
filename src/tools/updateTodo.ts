@@ -48,7 +48,7 @@ async function updateTodo(input: UpdateTodoInput) {
             .limit(1)
 
         if (!existingTodo) {
-            throw new Error('Задача не найдена или у вас нет прав на её изменение')
+            throw new Error('Task not found or you do not have permission to update it')
         }
 
         // Получаем существующий content
@@ -117,13 +117,16 @@ async function updateTodo(input: UpdateTodoInput) {
                     updatedAt: updatedTodo.updatedAt,
                 },
             },
-            message: `Задача "${updatedTodo.title}" успешно обновлена`,
+            message: `Task "${updatedTodo.title}" updated successfully`,
         }
     } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown database error'
+        console.error(`❌ updateTodo error: ${errorMessage}`)
         return {
             success: false,
             operation: 'update',
-            error: error instanceof Error ? error.message : 'Неизвестная ошибка',
+            error: errorMessage,
+            message: `Failed to update task: ${errorMessage}`,
         }
     }
 }
@@ -148,9 +151,8 @@ export const toolDefinition: ToolDefinition = {
         try {
             const parsed = z.object(inputSchema).parse(input)
 
-            // Проверяем, что todoId присутствует
             if (!parsed.todoId) {
-                throw new Error('todoId обязателен - укажите ID задачи для обновления')
+                throw new Error('todoId is required - specify the task ID to update')
             }
 
             const result = await updateTodo(parsed as UpdateTodoInput)
@@ -160,14 +162,16 @@ export const toolDefinition: ToolDefinition = {
                 ],
             }
         } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+            const result = {
+                success: false,
+                operation: 'update',
+                error: errorMessage,
+                message: `Failed to update task: ${errorMessage}`,
+            }
             return {
                 content: [
-                    {
-                        type: 'text' as const,
-                        text: `Ошибка: ${
-                            error instanceof Error ? error.message : String(error)
-                        }`,
-                    },
+                    { type: 'text' as const, text: JSON.stringify(result, null, 2) },
                 ],
             }
         }

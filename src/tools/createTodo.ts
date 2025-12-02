@@ -79,10 +79,13 @@ async function createTodo(input: CreateTodoInput) {
             message: `Task "${input.title}" created successfully`,
         }
     } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown database error'
+        console.error(`❌ createTodo error: ${errorMessage}`)
         return {
             success: false,
             operation: 'create',
-            error: error instanceof Error ? error.message : 'Неизвестная ошибка',
+            error: errorMessage,
+            message: `Failed to create task: ${errorMessage}`,
         }
     }
 }
@@ -105,9 +108,8 @@ export const toolDefinition: ToolDefinition = {
         try {
             const parsed = z.object(inputSchema).parse(input)
 
-            // Проверяем, что обязательные поля присутствуют
             if (!parsed.title) {
-                throw new Error('Название задачи обязательно')
+                throw new Error('Title is required')
             }
 
             const result = await createTodo(parsed as CreateTodoInput)
@@ -117,14 +119,16 @@ export const toolDefinition: ToolDefinition = {
                 ],
             }
         } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+            const result = {
+                success: false,
+                operation: 'create',
+                error: errorMessage,
+                message: `Failed to create task: ${errorMessage}`,
+            }
             return {
                 content: [
-                    {
-                        type: 'text' as const,
-                        text: `Ошибка: ${
-                            error instanceof Error ? error.message : String(error)
-                        }`,
-                    },
+                    { type: 'text' as const, text: JSON.stringify(result, null, 2) },
                 ],
             }
         }

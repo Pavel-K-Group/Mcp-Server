@@ -15,7 +15,7 @@ const client = postgres(connectionString, {
 // Создаем экземпляр Drizzle
 export const db = drizzle(client, { schema })
 
-// Функция для проверки подключения к базе данных
+// Функция для проверки подключения к базе данных (при старте)
 export async function testConnection() {
     try {
         await client`SELECT 1`
@@ -23,6 +23,16 @@ export async function testConnection() {
         return true
     } catch (error) {
         console.error('❌ Database connection failed:', error)
+        return false
+    }
+}
+
+// Быстрая проверка DB для tools (без логирования)
+export async function isDbConnected(): Promise<boolean> {
+    try {
+        await client`SELECT 1`
+        return true
+    } catch {
         return false
     }
 }

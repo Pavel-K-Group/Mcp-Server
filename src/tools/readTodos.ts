@@ -78,20 +78,34 @@ async function readTodos(input: ReadTodosInput) {
             }
         })
 
+        // Формируем понятное сообщение
+        let message: string
+        if (formattedTodos.length === 0) {
+            message = 'No tasks assigned to you. Your task list is empty.'
+        } else if (formattedTodos.length === 1) {
+            message = 'You have 1 task assigned.'
+        } else {
+            message = `You have ${formattedTodos.length} tasks assigned.`
+        }
+
         return {
             success: true,
             operation: 'read',
             data: {
                 todos: formattedTodos,
                 count: formattedTodos.length,
+                isEmpty: formattedTodos.length === 0,
             },
-            message: `Found ${formattedTodos.length} task(s)`,
+            message,
         }
     } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown database error'
+        console.error(`❌ readTodos error: ${errorMessage}`)
         return {
             success: false,
             operation: 'read',
-            error: error instanceof Error ? error.message : 'Unknown error',
+            error: errorMessage,
+            message: `Failed to read tasks: ${errorMessage}`,
         }
     }
 }
@@ -115,7 +129,6 @@ export const toolDefinition: ToolDefinition = {
     handler: async (input: unknown) => {
         try {
             const parsed = z.object(inputSchema).parse(input)
-
             const result = await readTodos(parsed as ReadTodosInput)
             return {
                 content: [
@@ -123,14 +136,16 @@ export const toolDefinition: ToolDefinition = {
                 ],
             }
         } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+            const result = {
+                success: false,
+                operation: 'read',
+                error: errorMessage,
+                message: `Failed to read tasks: ${errorMessage}`,
+            }
             return {
                 content: [
-                    {
-                        type: 'text' as const,
-                        text: `Ошибка: ${
-                            error instanceof Error ? error.message : String(error)
-                        }`,
-                    },
+                    { type: 'text' as const, text: JSON.stringify(result, null, 2) },
                 ],
             }
         }

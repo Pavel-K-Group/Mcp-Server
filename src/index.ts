@@ -16,14 +16,74 @@ app.use(express.json())
 app.use(cors({ origin: '*' }))
 
 const transports: { [sessionId: string]: StreamableHTTPServerTransport } = {}
+const sessionLastActivity: { [sessionId: string]: number } = {}
+
+// Таймауты
+const SESSION_TIMEOUT_MS = 5 * 60 * 1000 // 5 минут неактивности
+const CLEANUP_INTERVAL_MS = 60 * 1000 // проверка каждую минуту
+
+/**
+ * Обновляет время активности сессии
+ */
+function updateActivity(sessionId: string) {
+  sessionLastActivity[sessionId] = Date.now()
+}
+
+/**
+ * Очищает сессию
+ */
+function cleanupSession(sessionId: string, reason: string) {
+  const transport = transports[sessionId]
+  if (transport) {
+    console.log(`🧹 Session cleanup: ${sessionId.slice(0, 8)}... | Reason: ${reason}`)
+    removeSessionContext(sessionId)
+    delete transports[sessionId]
+    delete sessionLastActivity[sessionId]
+    try {
+      transport.close?.()
+    } catch {}
+  }
+}
+
+/**
+ * Периодическая очистка неактивных сессий
+ */
+function cleanupInactiveSessions() {
+  const now = Date.now()
+  let cleaned = 0
+  
+  for (const sessionId in sessionLastActivity) {
+    if (now - sessionLastActivity[sessionId] > SESSION_TIMEOUT_MS) {
+      cleanupSession(sessionId, 'inactivity timeout')
+      cleaned++
+    }
+  }
+  
+  if (cleaned > 0) {
+    console.log(`🧹 Cleaned ${cleaned} inactive sessions | Active: ${Object.keys(transports).length}`)
+  }
+}
+
+// Запускаем очистку
+setInterval(cleanupInactiveSessions, CLEANUP_INTERVAL_MS)
 
 // Health check
 app.get('/', (_req, res) => {
   res.json({
     name: 'Timelix MCP Server',
-    version: '1.0.0',
+    version: '1.1.0',
     status: 'running',
     endpoint: '/mcp',
+  })
+})
+
+// Статус сервера
+app.get('/health', (_req, res) => {
+  res.json({
+    status: 'ok',
+    activeSessions: Object.keys(transports).length,
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString()
   })
 })
 
@@ -38,15 +98,23 @@ function parseSessionParams(req: Request) {
 }
 
 app.post('/mcp', async (req: Request, res: Response) => {
-  console.log('📨 MCP POST request')
   try {
     const sessionId = req.headers['mcp-session-id'] as string | undefined
 
     if (sessionId && transports[sessionId]) {
-      // Существующая сессия
+      // Существующая сессия - обновляем активность
       const transport = transports[sessionId]
       setActiveSession(sessionId)
+      updateActivity(sessionId)
       await transport.handleRequest(req, res, req.body)
+    } else if (sessionId && !transports[sessionId]) {
+      // Сессия не найдена - клиент должен переподключиться
+      console.warn(`⚠️ Session expired: ${sessionId.slice(0, 8)}... - client needs to reconnect`)
+      res.status(404).json({
+        jsonrpc: '2.0',
+        error: { code: -32001, message: 'Session expired. Please reconnect.' },
+        id: null,
+      })
     } else if (!sessionId && isInitializeRequest(req.body)) {
       // Новая сессия
       const { todoListId, agentId, userId } = parseSessionParams(req)
@@ -57,6 +125,7 @@ app.post('/mcp', async (req: Request, res: Response) => {
         sessionIdGenerator: () => randomUUID(),
         onsessioninitialized: (newSessionId) => {
           transports[newSessionId] = transport
+          updateActivity(newSessionId)
           createSessionContext(newSessionId, todoListId, agentId, userId)
           console.log(`✅ Session created: ${newSessionId.slice(0, 8)}... | Active: ${Object.keys(transports).length}`)
         },
@@ -65,9 +134,16 @@ app.post('/mcp', async (req: Request, res: Response) => {
       transport.onclose = () => {
         const sid = transport.sessionId
         if (sid && transports[sid]) {
-          console.log(`🔌 Session closed: ${sid.slice(0, 8)}...`)
-          removeSessionContext(sid)
-          delete transports[sid]
+          console.log(`🔌 Session closed by client: ${sid.slice(0, 8)}... | Remaining: ${Object.keys(transports).length - 1}`)
+          cleanupSession(sid, 'client disconnect')
+        }
+      }
+      
+      transport.onerror = (error: Error) => {
+        const sid = transport.sessionId
+        console.error(`❌ Transport error [${sid?.slice(0, 8) || '?'}]: ${error.message}`)
+        if (sid) {
+          cleanupSession(sid, `error: ${error.message}`)
         }
       }
 
@@ -145,9 +221,11 @@ async function start() {
 
   app.listen(PORT, HOST, () => {
     console.log('')
-    console.log(`🚀 Timelix MCP Server v1.0.0`)
+    console.log(`🚀 Timelix MCP Server v1.1.0`)
     console.log(`   Endpoint: http://${HOST}:${PORT}/mcp`)
+    console.log(`   Health:   http://${HOST}:${PORT}/health`)
     console.log(`   Database: ${dbConnected ? '✅' : '❌'}`)
+    console.log(`   Session timeout: ${SESSION_TIMEOUT_MS / 1000}s`)
     console.log('')
   })
 }

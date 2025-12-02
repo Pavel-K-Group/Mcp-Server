@@ -44,7 +44,7 @@ async function deleteTodo(input: DeleteTodoInput) {
             .limit(1)
 
         if (!existingTodo) {
-            throw new Error('Задача не найдена или у вас нет прав на её удаление')
+            throw new Error('Task not found or you do not have permission to delete it')
         }
 
         const todoTitle = existingTodo.title
@@ -68,10 +68,10 @@ async function deleteTodo(input: DeleteTodoInput) {
                     todoId: input.todoId,
                     permanent: true,
                 },
-                message: `Задача "${todoTitle}" безвозвратно удалена из базы данных`,
+                message: `Task "${todoTitle}" permanently deleted from database`,
             }
         } else {
-            // Мягкое удаление (soft delete) - помечаем deletedAt
+            // Soft delete - set deletedAt
             const [deletedTodo] = await db
                 .update(block)
                 .set({
@@ -96,14 +96,17 @@ async function deleteTodo(input: DeleteTodoInput) {
                     deletedAt: deletedTodo.deletedAt,
                     permanent: false,
                 },
-                message: `Задача "${todoTitle}" перемещена в корзину (можно восстановить)`,
+                message: `Task "${todoTitle}" moved to trash (can be restored)`,
             }
         }
     } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown database error'
+        console.error(`❌ deleteTodo error: ${errorMessage}`)
         return {
             success: false,
             operation: 'delete',
-            error: error instanceof Error ? error.message : 'Неизвестная ошибка',
+            error: errorMessage,
+            message: `Failed to delete task: ${errorMessage}`,
         }
     }
 }
@@ -129,9 +132,8 @@ export const toolDefinition: ToolDefinition = {
         try {
             const parsed = z.object(inputSchema).parse(input)
 
-            // Проверяем, что todoId присутствует
             if (!parsed.todoId) {
-                throw new Error('todoId обязателен - укажите ID задачи для удаления')
+                throw new Error('todoId is required - specify the task ID to delete')
             }
 
             const result = await deleteTodo(parsed as DeleteTodoInput)
@@ -141,14 +143,16 @@ export const toolDefinition: ToolDefinition = {
                 ],
             }
         } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+            const result = {
+                success: false,
+                operation: 'delete',
+                error: errorMessage,
+                message: `Failed to delete task: ${errorMessage}`,
+            }
             return {
                 content: [
-                    {
-                        type: 'text' as const,
-                        text: `Ошибка: ${
-                            error instanceof Error ? error.message : String(error)
-                        }`,
-                    },
+                    { type: 'text' as const, text: JSON.stringify(result, null, 2) },
                 ],
             }
         }

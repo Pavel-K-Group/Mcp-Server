@@ -5,8 +5,10 @@ if (process.env.NODE_ENV !== 'production') {
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
-import express from 'express'
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import express, { Request, Response } from 'express'
 import cors from 'cors'
+import { randomUUID } from 'crypto'
 import { loadAllTools } from './utils/tool-loader.js'
 import { testConnection } from './database/client.js'
 import { 
@@ -18,7 +20,7 @@ import {
 // Create an MCP server
 const server = new McpServer({
     name: 'Universal MCP Server',
-    version: '1.0.0',
+    version: '2.0.0',
 })
 
 // Автоматически загружаем и регистрируем все инструменты
@@ -38,12 +40,16 @@ async function registerAllTools() {
 const app = express()
 const PORT = Number(process.env.PORT) || 8080
 
+// НЕ используем express.json() глобально — это ломает SSE!
+// JSON парсинг применяется только к /mcp endpoint ниже
+
 // Настраиваем CORS
 app.use(
     cors({
         origin: '*',
-        methods: ['GET', 'POST', 'OPTIONS'],
-        allowedHeaders: ['Content-Type', 'Authorization'],
+        methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+        allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'mcp-session-id'],
+        exposedHeaders: ['mcp-session-id'],
     }),
 )
 
@@ -51,27 +57,143 @@ app.use(
 app.get('/', (req, res) => {
     res.json({
         name: 'Universal MCP Server',
-        version: '1.0.0',
+        version: '2.0.0',
         status: 'running',
         endpoints: {
+            // Новый стабильный endpoint (Streamable HTTP)
+            streamableHttp: '/mcp',
+            // Legacy endpoint (SSE) - для обратной совместимости
             sse: '/sse',
         },
+        docs: {
+            streamableHttp: 'POST/GET/DELETE /mcp - рекомендуемый, стабильный',
+            sse: 'GET /sse + POST /message - legacy, для старых клиентов',
+        }
     })
 })
 
-// Глобальная переменная для хранения транспортов по сессиям
-const transports = new Map<string, SSEServerTransport>()
+// ============================================================================
+// 🚀 НОВЫЙ ENDPOINT: Streamable HTTP (рекомендуемый)
+// ============================================================================
 
-// SSE endpoint для MCP - для получения сообщений от сервера
-// Поддерживает query params: todoListId, agentId, userId
-// Пример: /sse?todoListId=XXX&agentId=YYY&userId=ZZZ
-app.get('/sse', async (req, res) => {
-    // Парсим query params для контекста сессии
+// Хранилище транспортов Streamable HTTP по сессиям
+const streamableTransports = new Map<string, StreamableHTTPServerTransport>()
+
+/**
+ * Парсит query params из URL для контекста сессии
+ */
+function parseSessionParams(req: Request) {
     const todoListId = typeof req.query.todoListId === 'string' ? req.query.todoListId : null
     const agentId = typeof req.query.agentId === 'string' ? req.query.agentId : null
     const userId = typeof req.query.userId === 'string' ? req.query.userId : null
+    return { todoListId, agentId, userId }
+}
+
+/**
+ * Streamable HTTP endpoint - обрабатывает все методы (GET, POST, DELETE)
+ * 
+ * Подключение:
+ * - POST /mcp?todoListId=XXX&agentId=YYY&userId=ZZZ
+ * - Headers: Accept: application/json, text/event-stream
+ *            Content-Type: application/json
+ */
+app.all('/mcp', express.json(), async (req: Request, res: Response) => {
+    // Получаем session ID из заголовка (если есть)
+    const sessionId = req.headers['mcp-session-id'] as string | undefined
+
+    // Если есть существующая сессия - используем её транспорт
+    if (sessionId && streamableTransports.has(sessionId)) {
+        const transport = streamableTransports.get(sessionId)!
+        setActiveSession(sessionId)
+        await transport.handleRequest(req, res, req.body)
+        return
+    }
+
+    // Для новых сессий - создаём транспорт
+    if (req.method === 'POST' || req.method === 'GET') {
+        const { todoListId, agentId, userId } = parseSessionParams(req)
+        
+        console.log('📡 New Streamable HTTP connection:', {
+            method: req.method,
+            todoListId: todoListId || 'not set',
+            agentId: agentId || 'not set',
+            userId: userId || 'not set',
+        })
+
+        try {
+            const transport = new StreamableHTTPServerTransport({
+                sessionIdGenerator: () => randomUUID(),
+                onsessioninitialized: (newSessionId) => {
+                    // Сохраняем транспорт по session ID
+                    streamableTransports.set(newSessionId, transport)
+                    
+                    // Создаём контекст сессии
+                    createSessionContext(newSessionId, todoListId, agentId, userId)
+                    
+                    console.log(`✅ Streamable HTTP сессия создана: ${newSessionId}`)
+                }
+            })
+
+            // Обработка закрытия транспорта
+            transport.onclose = () => {
+                if (transport.sessionId) {
+                    streamableTransports.delete(transport.sessionId)
+                    removeSessionContext(transport.sessionId)
+                    console.log(`❌ Streamable HTTP сессия закрыта: ${transport.sessionId}`)
+                }
+            }
+
+            // Подключаем сервер к транспорту
+            await server.connect(transport)
+            
+            // Обрабатываем запрос
+            await transport.handleRequest(req, res, req.body)
+            
+        } catch (error) {
+            console.error('❌ Ошибка Streamable HTTP:', error)
+            if (!res.headersSent) {
+                res.status(500).json({ 
+                    jsonrpc: '2.0',
+                    error: { 
+                        code: -32603, 
+                        message: 'Internal server error' 
+                    },
+                    id: null
+                })
+            }
+        }
+        return
+    }
+
+    // Неизвестный метод без session ID
+    res.status(400).json({
+        jsonrpc: '2.0',
+        error: {
+            code: -32600,
+            message: 'Bad Request: Missing mcp-session-id header'
+        },
+        id: null
+    })
+})
+
+// ============================================================================
+// 📺 LEGACY ENDPOINT: SSE (для обратной совместимости)
+// ============================================================================
+
+// Глобальная переменная для хранения SSE транспортов по сессиям
+const sseTransports = new Map<string, SSEServerTransport>()
+
+/**
+ * SSE endpoint для MCP - для получения сообщений от сервера
+ * Поддерживает query params: todoListId, agentId, userId
+ * Пример: /sse?todoListId=XXX&agentId=YYY&userId=ZZZ
+ * 
+ * ⚠️ LEGACY: Используйте /mcp для новых интеграций
+ */
+app.get('/sse', async (req, res) => {
+    const { todoListId, agentId, userId } = parseSessionParams(req)
     
-    console.log('📡 New SSE connection:', {
+    console.log('📡 [LEGACY] New SSE connection:', {
         todoListId: todoListId || 'not set',
         agentId: agentId || 'not set',
         userId: userId || 'not set',
@@ -79,34 +201,38 @@ app.get('/sse', async (req, res) => {
 
     try {
         const transport = new SSEServerTransport('/message', res)
-        const sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(7)}`
-        transports.set(sessionId, transport)
+        const sessionId = `sse_${Date.now()}_${Math.random().toString(36).substring(7)}`
+        sseTransports.set(sessionId, transport)
         
         // Создаем контекст сессии с параметрами из query
         createSessionContext(sessionId, todoListId, agentId, userId)
 
         // Удаляем транспорт и контекст при закрытии соединения
         res.on('close', () => {
-            transports.delete(sessionId)
+            sseTransports.delete(sessionId)
             removeSessionContext(sessionId)
-            console.log(`❌ SSE соединение ${sessionId} закрыто`)
+            console.log(`❌ [LEGACY] SSE соединение ${sessionId} закрыто`)
         })
 
         await server.connect(transport)
-        console.log(`✅ MCP сервер подключен через SSE (сессия: ${sessionId})`)
+        console.log(`✅ [LEGACY] MCP сервер подключен через SSE (сессия: ${sessionId})`)
     } catch (error) {
-        console.error('❌ Ошибка подключения SSE:', error)
+        console.error('❌ [LEGACY] Ошибка подключения SSE:', error)
         res.status(500).json({ error: 'Failed to establish SSE connection' })
     }
 })
 
-// POST endpoint для обработки сообщений от клиента
+/**
+ * POST endpoint для обработки сообщений от SSE клиента
+ * 
+ * ⚠️ LEGACY: Используйте /mcp для новых интеграций
+ */
 app.post('/message', async (req, res) => {
-    console.log('🔄 MCP протокол: получен запрос от клиента')
+    console.log('🔄 [LEGACY] MCP протокол: получен запрос от клиента')
 
     try {
         // Ищем активный транспорт для обработки сообщения
-        const transportEntries = Array.from(transports.entries())
+        const transportEntries = Array.from(sseTransports.entries())
         
         if (transportEntries.length === 0) {
             return res.status(400).json({
@@ -120,14 +246,17 @@ app.post('/message', async (req, res) => {
 
         // Обрабатываем POST сообщение через активный транспорт
         await activeTransport.handlePostMessage(req, res)
-        console.log('✅ MCP протокол: запрос обработан')
+        console.log('✅ [LEGACY] MCP протокол: запрос обработан')
     } catch (error) {
-        console.error('❌ Ошибка обработки MCP запроса:', error)
+        console.error('❌ [LEGACY] Ошибка обработки MCP запроса:', error)
         res.status(500).json({ error: 'Failed to handle POST message' })
     }
 })
 
-// Инициализируем сервер
+// ============================================================================
+// 🚀 Запуск сервера
+// ============================================================================
+
 async function startServer() {
     // Проверяем подключение к базе данных
     console.log('🔄 Проверяем подключение к базе данных...')
@@ -148,12 +277,21 @@ async function startServer() {
             : 'localhost'
 
     app.listen(PORT, HOST, () => {
-        console.log(`🚀 Universal MCP Server запущен на http://${HOST}:${PORT}`)
-        console.log(`📡 SSE endpoint доступен на http://${HOST}:${PORT}/sse`)
-        console.log(`🔧 Настройте ваш MCP клиент на: http://${HOST}:${PORT}/sse`)
+        console.log('')
+        console.log('═══════════════════════════════════════════════════════════')
+        console.log(`🚀 Universal MCP Server v2.0.0 запущен на http://${HOST}:${PORT}`)
+        console.log('═══════════════════════════════════════════════════════════')
+        console.log('')
+        console.log('📡 Endpoints:')
+        console.log(`   🆕 Streamable HTTP: http://${HOST}:${PORT}/mcp`)
+        console.log(`      └─ POST/GET/DELETE, стабильный, рекомендуемый`)
+        console.log(`   📺 Legacy SSE:      http://${HOST}:${PORT}/sse`)
+        console.log(`      └─ GET + POST /message, для старых клиентов`)
+        console.log('')
         if (dbConnected) {
             console.log(`💾 База данных подключена и готова к работе`)
         }
+        console.log('')
     })
 }
 

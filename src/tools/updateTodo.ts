@@ -3,7 +3,19 @@ import type { ToolDefinition } from '../types/tool.js'
 import { db } from '../database/client.js'
 import { block } from '../database/schema.js'
 import { eq, and, isNull } from 'drizzle-orm'
-import { getTodoListId, getAgentId, getUserId } from '../context/sessionContext.js'
+import { 
+    getTodoListId, 
+    getAgentId, 
+    getUserId, 
+    getIpAddress, 
+    getUserAgent, 
+    getSessionId 
+} from '../context/sessionContext.js'
+import { validateAndSanitize } from '../utils/sanitize.js'
+import { 
+    logBlockedAttempt, 
+    logSuspiciousActivity 
+} from '../utils/securityLogger.js'
 
 /**
  * Интерфейс для входных данных обновления тудушки
@@ -25,9 +37,94 @@ async function updateTodo(input: UpdateTodoInput) {
     const userId = getUserId()
     const todoListId = getTodoListId()
     const agentId = getAgentId()
+    const ipAddress = getIpAddress()
+    const userAgent = getUserAgent()
+    const sessionId = getSessionId()
     
     if (!userId) {
         throw new Error('User not authenticated. Session userId is required.')
+    }
+    
+    // Валидация и санитизация title если он передан
+    let sanitizedTitle: string | undefined = undefined
+    if (input.title !== undefined) {
+        const titleValidation = validateAndSanitize(input.title, 200)
+        if (!titleValidation.isValid) {
+            logBlockedAttempt('updateTodo', 'Title validation failed', {
+                userId,
+                sessionId,
+                ipAddress,
+                userAgent,
+                errors: titleValidation.errors,
+                input: input.title,
+            })
+            throw new Error(`Title validation failed: ${titleValidation.errors.join(', ')}`)
+        }
+        
+        if (!titleValidation.isSafe) {
+            logBlockedAttempt('updateTodo', 'Malicious content detected in title', {
+                userId,
+                sessionId,
+                ipAddress,
+                userAgent,
+                threats: titleValidation.threats,
+                input: input.title,
+            })
+            throw new Error('Malicious content detected in title. Request blocked for security reasons.')
+        }
+        
+        sanitizedTitle = titleValidation.sanitized
+        
+        if (titleValidation.threats.length > 0) {
+            logSuspiciousActivity('updateTodo', 'Suspicious patterns detected and blocked in title', {
+                userId,
+                sessionId,
+                ipAddress,
+                userAgent,
+                threats: titleValidation.threats,
+            })
+        }
+    }
+    
+    // Валидация и санитизация description если он передан
+    let sanitizedDescription: string | undefined = undefined
+    if (input.description !== undefined) {
+        const descriptionValidation = validateAndSanitize(input.description, 2000)
+        if (!descriptionValidation.isValid) {
+            logBlockedAttempt('updateTodo', 'Description validation failed', {
+                userId,
+                sessionId,
+                ipAddress,
+                userAgent,
+                errors: descriptionValidation.errors,
+                input: input.description,
+            })
+            throw new Error(`Description validation failed: ${descriptionValidation.errors.join(', ')}`)
+        }
+        
+        if (!descriptionValidation.isSafe) {
+            logBlockedAttempt('updateTodo', 'Malicious content detected in description', {
+                userId,
+                sessionId,
+                ipAddress,
+                userAgent,
+                threats: descriptionValidation.threats,
+                input: input.description,
+            })
+            throw new Error('Malicious content detected in description. Request blocked for security reasons.')
+        }
+        
+        sanitizedDescription = descriptionValidation.sanitized
+        
+        if (descriptionValidation.threats.length > 0) {
+            logSuspiciousActivity('updateTodo', 'Suspicious patterns detected and blocked in description', {
+                userId,
+                sessionId,
+                ipAddress,
+                userAgent,
+                threats: descriptionValidation.threats,
+            })
+        }
     }
     
     console.log(`📝 updateTodo: todo=${input.todoId?.slice(0, 8)}, user=${userId?.slice(0, 8)}, agent=${agentId?.slice(0, 8) || 'none'}`)
@@ -57,8 +154,8 @@ async function updateTodo(input: UpdateTodoInput) {
         // Формируем обновленный content
         const updatedContent = {
             description:
-                input.description !== undefined
-                    ? input.description
+                sanitizedDescription !== undefined
+                    ? sanitizedDescription
                     : (existingContent.description as string) || '',
             completed:
                 input.completed !== undefined
@@ -76,14 +173,23 @@ async function updateTodo(input: UpdateTodoInput) {
             updatedAt: new Date().toISOString(),
         }
 
-        // Обновляем title если он передан
-        if (input.title !== undefined) {
-            updateData.title = input.title
+        // Обновляем title если он передан (используем санитизированное значение)
+        if (sanitizedTitle !== undefined) {
+            updateData.title = sanitizedTitle
         }
 
-        // Обновляем tags если они переданы
-        if (input.tags !== undefined) {
-            updateData.tags = input.tags
+        // Обновляем tags если они переданы (с санитизацией)
+        if (input.tags !== undefined && Array.isArray(input.tags)) {
+            const sanitizedTags: string[] = []
+            for (const tag of input.tags) {
+                if (typeof tag === 'string') {
+                    const tagValidation = validateAndSanitize(tag, 50)
+                    if (tagValidation.isSafe && tagValidation.isValid) {
+                        sanitizedTags.push(tagValidation.sanitized)
+                    }
+                }
+            }
+            updateData.tags = sanitizedTags
         }
 
         // Выполняем обновление

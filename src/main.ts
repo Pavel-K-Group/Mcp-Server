@@ -102,6 +102,27 @@ function parseSessionParams(req: Request) {
 }
 
 /**
+ * Получает IP адрес клиента из запроса
+ */
+function getClientIp(req: Request): string | null {
+    // Проверяем заголовки прокси (если приложение за reverse proxy)
+    const forwarded = req.headers['x-forwarded-for']
+    if (forwarded) {
+        const ips = typeof forwarded === 'string' ? forwarded.split(',') : forwarded
+        return ips[0]?.trim() || null
+    }
+    
+    // Проверяем другие заголовки
+    const realIp = req.headers['x-real-ip']
+    if (realIp && typeof realIp === 'string') {
+        return realIp
+    }
+    
+    // Используем IP из соединения
+    return req.socket.remoteAddress || null
+}
+
+/**
  * Обёртка для выполнения с таймаутом
  */
 function withTimeout<T>(promise: Promise<T>, ms: number, operation: string): Promise<T> {
@@ -212,15 +233,17 @@ app.all('/mcp', express.json(), async (req: Request, res: Response) => {
         // Для новых сессий - создаём транспорт
         if (req.method === 'POST' || req.method === 'GET') {
             const { todoListId, agentId, userId } = parseSessionParams(req)
+            const ipAddress = getClientIp(req)
+            const userAgent = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : null
             
-            console.log(`📡 New connection: method=${req.method}, user=${userId?.slice(0, 8) || 'none'}, agent=${agentId?.slice(0, 8) || 'none'}`)
+            console.log(`📡 New connection: method=${req.method}, user=${userId?.slice(0, 8) || 'none'}, agent=${agentId?.slice(0, 8) || 'none'}, ip=${ipAddress || 'unknown'}`)
 
             const transport = new StreamableHTTPServerTransport({
                 sessionIdGenerator: () => randomUUID(),
                 onsessioninitialized: (newSessionId) => {
                     transports.set(newSessionId, transport)
                     updateSessionActivity(newSessionId)
-                    createSessionContext(newSessionId, todoListId, agentId, userId)
+                    createSessionContext(newSessionId, todoListId, agentId, userId, ipAddress, userAgent)
                     console.log(`✅ Session created: ${newSessionId.slice(0, 8)}... | Active: ${transports.size}`)
                 }
             })

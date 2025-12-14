@@ -16,6 +16,10 @@ export interface SessionContext {
     sessionId: string
     /** Время создания сессии */
     createdAt: Date
+    /** IP адрес клиента */
+    ipAddress: string | null
+    /** User agent клиента */
+    userAgent: string | null
 }
 
 /**
@@ -37,7 +41,9 @@ export function createSessionContext(
     sessionId: string,
     todoListId: string | null,
     agentId: string | null,
-    userId: string | null
+    userId: string | null,
+    ipAddress: string | null = null,
+    userAgent: string | null = null
 ): SessionContext {
     const context: SessionContext = {
         todoListId,
@@ -45,6 +51,8 @@ export function createSessionContext(
         userId,
         sessionId,
         createdAt: new Date(),
+        ipAddress,
+        userAgent,
     }
     
     sessionContexts.set(sessionId, context)
@@ -54,6 +62,7 @@ export function createSessionContext(
         todoListId: todoListId?.slice(0, 8) || 'none',
         agentId: agentId?.slice(0, 8) || 'none',
         userId: userId?.slice(0, 8) || 'none',
+        ip: ipAddress || 'none',
     })
     
     return context
@@ -127,5 +136,32 @@ export function getAgentId(): string | null {
 export function getUserId(): string | null {
     const context = getCurrentSessionContext()
     return context?.userId || null
+}
+
+/**
+ * Получает IP адрес для текущей сессии
+ * Удобная функция для использования в tools
+ */
+export function getIpAddress(): string | null {
+    const context = getCurrentSessionContext()
+    return context?.ipAddress || null
+}
+
+/**
+ * Получает user agent для текущей сессии
+ * Удобная функция для использования в tools
+ */
+export function getUserAgent(): string | null {
+    const context = getCurrentSessionContext()
+    return context?.userAgent || null
+}
+
+/**
+ * Получает sessionId для текущей сессии
+ * Удобная функция для использования в tools
+ */
+export function getSessionId(): string | null {
+    const context = getCurrentSessionContext()
+    return context?.sessionId || null
 }
 

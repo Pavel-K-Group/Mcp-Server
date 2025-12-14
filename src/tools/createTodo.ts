@@ -3,7 +3,21 @@ import type { ToolDefinition } from '../types/tool.js'
 import { db } from '../database/client.js'
 import { block } from '../database/schema.js'
 import { eq, and, isNull } from 'drizzle-orm'
-import { getTodoListId, getAgentId, getUserId } from '../context/sessionContext.js'
+import { 
+    getTodoListId, 
+    getAgentId, 
+    getUserId, 
+    getIpAddress, 
+    getUserAgent, 
+    getSessionId 
+} from '../context/sessionContext.js'
+import { validateAndSanitize } from '../utils/sanitize.js'
+import { checkTodoCreationRateLimit } from '../utils/rateLimiter.js'
+import { 
+    logBlockedAttempt, 
+    logRateLimitExceeded, 
+    logSuspiciousActivity 
+} from '../utils/securityLogger.js'
 
 /**
  * Входные данные для создания задачи
@@ -23,6 +37,9 @@ async function createTodo(input: CreateTodoInput) {
     const userId = getUserId()
     const parentId = getTodoListId()
     const agentId = getAgentId()
+    const ipAddress = getIpAddress()
+    const userAgent = getUserAgent()
+    const sessionId = getSessionId()
     
     if (!userId) {
         throw new Error('User not authenticated. Session userId is required.')
@@ -32,7 +49,87 @@ async function createTodo(input: CreateTodoInput) {
         throw new Error('Session not configured. todoListId is required.')
     }
     
-    console.log(`✏️ createTodo: title="${input.title?.slice(0, 30)}...", user=${userId?.slice(0, 8)}, parent=${parentId?.slice(0, 8)}, agent=${agentId?.slice(0, 8) || 'none'}`)
+    // Проверка rate limiting
+    const rateLimitCheck = checkTodoCreationRateLimit(userId)
+    if (!rateLimitCheck.allowed) {
+        logRateLimitExceeded('createTodo', {
+            userId,
+            sessionId,
+            ipAddress,
+            userAgent,
+            resetTime: rateLimitCheck.resetTime,
+        })
+        throw new Error(`Rate limit exceeded. Maximum ${rateLimitCheck.remaining === 0 ? 10 : rateLimitCheck.remaining} tasks per minute. Try again later.`)
+    }
+    
+    // Валидация и санитизация title
+    const titleValidation = validateAndSanitize(input.title || '', 200)
+    if (!titleValidation.isValid) {
+        logBlockedAttempt('createTodo', 'Title validation failed', {
+            userId,
+            sessionId,
+            ipAddress,
+            userAgent,
+            errors: titleValidation.errors,
+            input: input.title,
+        })
+        throw new Error(`Title validation failed: ${titleValidation.errors.join(', ')}`)
+    }
+    
+    if (!titleValidation.isSafe) {
+        logBlockedAttempt('createTodo', 'Malicious content detected in title', {
+            userId,
+            sessionId,
+            ipAddress,
+            userAgent,
+            threats: titleValidation.threats,
+            input: input.title,
+        })
+        throw new Error('Malicious content detected in title. Request blocked for security reasons.')
+    }
+    
+    // Валидация и санитизация description
+    const descriptionValidation = validateAndSanitize(input.description || '', 2000)
+    if (!descriptionValidation.isValid) {
+        logBlockedAttempt('createTodo', 'Description validation failed', {
+            userId,
+            sessionId,
+            ipAddress,
+            userAgent,
+            errors: descriptionValidation.errors,
+            input: input.description,
+        })
+        throw new Error(`Description validation failed: ${descriptionValidation.errors.join(', ')}`)
+    }
+    
+    if (!descriptionValidation.isSafe) {
+        logBlockedAttempt('createTodo', 'Malicious content detected in description', {
+            userId,
+            sessionId,
+            ipAddress,
+            userAgent,
+            threats: descriptionValidation.threats,
+            input: input.description,
+        })
+        throw new Error('Malicious content detected in description. Request blocked for security reasons.')
+    }
+    
+    // Логируем подозрительную активность если есть угрозы, но они были заблокированы
+    if (titleValidation.threats.length > 0 || descriptionValidation.threats.length > 0) {
+        logSuspiciousActivity('createTodo', 'Suspicious patterns detected and blocked', {
+            userId,
+            sessionId,
+            ipAddress,
+            userAgent,
+            threats: [...titleValidation.threats, ...descriptionValidation.threats],
+        })
+    }
+    
+    // Используем санитизированные значения
+    const sanitizedTitle = titleValidation.sanitized
+    const sanitizedDescription = descriptionValidation.sanitized
+    
+    console.log(`✏️ createTodo: title="${sanitizedTitle?.slice(0, 30)}...", user=${userId?.slice(0, 8)}, parent=${parentId?.slice(0, 8)}, agent=${agentId?.slice(0, 8) || 'none'}`)
 
     try {
         // Подготавливаем контент для JSONB поля
@@ -44,13 +141,29 @@ async function createTodo(input: CreateTodoInput) {
             ...(agentId && { assigneeId: agentId }),
         }
 
+        // Валидация и санитизация tags
+        const sanitizedTags: string[] = []
+        if (input.tags && Array.isArray(input.tags)) {
+            for (const tag of input.tags) {
+                if (typeof tag === 'string') {
+                    const tagValidation = validateAndSanitize(tag, 50)
+                    if (tagValidation.isSafe && tagValidation.isValid) {
+                        sanitizedTags.push(tagValidation.sanitized)
+                    }
+                }
+            }
+        }
+        
         // Создаем новый блок типа todo с обязательным parentId (position не указываем - будет null)
         const insertData = {
             userId,
             type: 'todo' as const,
-            title: input.title,
-            content,
-            tags: input.tags || [],
+            title: sanitizedTitle,
+            content: {
+                ...content,
+                description: sanitizedDescription,
+            },
+            tags: sanitizedTags,
             parentId,
             hasChildren: false,
             archived: false,
@@ -65,7 +178,7 @@ async function createTodo(input: CreateTodoInput) {
                 todo: {
                     id: newTodo.id,
                     title: newTodo.title,
-                    description: content.description,
+                    description: sanitizedDescription,
                     completed: content.completed,
                     priority: content.priority,
                     assigneeId: agentId || null,
@@ -76,7 +189,7 @@ async function createTodo(input: CreateTodoInput) {
                     updatedAt: newTodo.updatedAt,
                 },
             },
-            message: `Task "${input.title}" created successfully`,
+            message: `Task "${sanitizedTitle}" created successfully`,
         }
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown database error'

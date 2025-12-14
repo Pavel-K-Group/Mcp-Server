@@ -495,4 +495,423 @@ export function registerTools(server: McpServer) {
       }
     },
   )
+
+  // ============================================================================
+  // getCompanyMetrics — получить все метрики компании
+  // ============================================================================
+  server.tool(
+    'getCompanyMetrics',
+    'Get all metrics for a company. Returns list of metrics with current values and weekly changes.',
+    {
+      companyId: z.string().describe('Company ID'),
+    },
+    async ({ companyId }) => {
+      const userId = getUserId()
+      if (!userId) throw new Error('User not authenticated')
+
+      console.log(`📊 getCompanyMetrics: company=${companyId?.slice(0, 8)}, user=${userId?.slice(0, 8)}`)
+
+      // Получаем компанию
+      const [company] = await db
+        .select()
+        .from(block)
+        .where(
+          and(
+            eq(block.id, companyId),
+            eq(block.userId, userId),
+            isNull(block.deletedAt),
+          ),
+        )
+        .limit(1)
+
+      if (!company) throw new Error('Company not found')
+
+      const companyContent = (company.content as Record<string, unknown>) || {}
+      const metricsId = companyContent.metricsId as string | undefined
+
+      if (!metricsId) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              success: true,
+              data: { metrics: [], count: 0 },
+              message: 'No metrics container configured for this company',
+            }, null, 2),
+          }],
+        }
+      }
+
+      // Получаем все блоки в контейнере метрик
+      // Тип 'metric' не в enum схемы, фильтруем по parentId
+      const allBlocks = await db
+        .select()
+        .from(block)
+        .where(
+          and(
+            eq(block.userId, userId),
+            eq(block.parentId, metricsId),
+            isNull(block.deletedAt),
+          ),
+        )
+        .orderBy(asc(block.position))
+
+      // Фильтруем метрики по content.metricType
+      const metrics = allBlocks.filter((b) => {
+        const content = (b.content as Record<string, unknown>) || {}
+        return content.metricType === 'counter' || content.metricType === 'number'
+      })
+
+      // Считаем deltaWeek для каждой метрики
+      const weekAgo = new Date()
+      weekAgo.setDate(weekAgo.getDate() - 7)
+
+      const formattedMetrics = metrics.map((metric) => {
+        const content = (metric.content as Record<string, unknown>) || {}
+        const history = (content.history as Array<{ value: number; timestamp: string; delta?: number }>) || []
+        
+        // Ищем значение неделю назад
+        let deltaWeek: number | null = null
+        const weekAgoEntry = history.find(h => new Date(h.timestamp) <= weekAgo)
+        if (weekAgoEntry !== undefined) {
+          deltaWeek = (content.currentValue as number || 0) - weekAgoEntry.value
+        } else if (history.length > 0) {
+          // Если нет записи неделю назад, берём первую запись
+          deltaWeek = (content.currentValue as number || 0) - history[0].value
+        }
+
+        return {
+          id: metric.id,
+          title: metric.title || 'Без названия',
+          metricType: (content.metricType as string) || 'counter',
+          currentValue: (content.currentValue as number) || 0,
+          unit: content.unit as string | undefined,
+          goal: content.goal as number | undefined,
+          icon: content.icon as string | undefined,
+          deltaWeek,
+        }
+      })
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            data: { metrics: formattedMetrics, count: formattedMetrics.length },
+            message: `Found ${formattedMetrics.length} metric(s)`,
+          }, null, 2),
+        }],
+      }
+    },
+  )
+
+  // ============================================================================
+  // incrementMetric — увеличить/уменьшить counter метрику
+  // ============================================================================
+  server.tool(
+    'incrementMetric',
+    'Increment or decrement a counter metric. Use for metrics like "workouts done", "interviews", etc.',
+    {
+      metricId: z.string().describe('Metric ID'),
+      delta: z.number().describe('Change amount (+1, -1, +5, etc.)'),
+      note: z.string().optional().describe('Optional comment for the change'),
+    },
+    async ({ metricId, delta, note }) => {
+      const userId = getUserId()
+      if (!userId) throw new Error('User not authenticated')
+
+      console.log(`➕ incrementMetric: metric=${metricId?.slice(0, 8)}, delta=${delta}, user=${userId?.slice(0, 8)}`)
+
+      const [metric] = await db
+        .select()
+        .from(block)
+        .where(
+          and(
+            eq(block.id, metricId),
+            eq(block.userId, userId),
+            isNull(block.deletedAt),
+          ),
+        )
+        .limit(1)
+
+      if (!metric) throw new Error('Metric not found')
+
+      const content = (metric.content as Record<string, unknown>) || {}
+      
+      // Проверяем что это метрика
+      if (content.metricType !== 'counter' && content.metricType !== 'number') {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              error: 'Not a metric',
+              message: 'This block is not a metric.',
+            }, null, 2),
+          }],
+        }
+      }
+
+      if (content.metricType !== 'counter') {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              error: 'Wrong metric type',
+              message: `This metric is "${content.metricType}", not "counter". Use setMetricValue for number metrics.`,
+            }, null, 2),
+          }],
+        }
+      }
+
+      const currentValue = (content.currentValue as number) || 0
+      const newValue = currentValue + delta
+      const history = (content.history as Array<Record<string, unknown>>) || []
+
+      const newEntry = {
+        value: newValue,
+        timestamp: new Date().toISOString(),
+        delta,
+        ...(note && { note }),
+      }
+
+      const updatedContent = {
+        ...content,
+        currentValue: newValue,
+        history: [...history, newEntry],
+      }
+
+      await db
+        .update(block)
+        .set({
+          content: updatedContent,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(block.id, metricId))
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            data: {
+              metricId,
+              title: metric.title,
+              previousValue: currentValue,
+              newValue,
+              delta,
+              unit: content.unit,
+            },
+            message: `${metric.title}: ${currentValue} → ${newValue} (${delta > 0 ? '+' : ''}${delta}${content.unit ? ' ' + content.unit : ''})`,
+          }, null, 2),
+        }],
+      }
+    },
+  )
+
+  // ============================================================================
+  // setMetricValue — установить значение number метрики
+  // ============================================================================
+  server.tool(
+    'setMetricValue',
+    'Set absolute value for a number metric. Use for metrics like "weight", "balance", "temperature".',
+    {
+      metricId: z.string().describe('Metric ID'),
+      value: z.number().describe('New value to set'),
+      note: z.string().optional().describe('Optional comment for the change'),
+    },
+    async ({ metricId, value, note }) => {
+      const userId = getUserId()
+      if (!userId) throw new Error('User not authenticated')
+
+      console.log(`📝 setMetricValue: metric=${metricId?.slice(0, 8)}, value=${value}, user=${userId?.slice(0, 8)}`)
+
+      const [metric] = await db
+        .select()
+        .from(block)
+        .where(
+          and(
+            eq(block.id, metricId),
+            eq(block.userId, userId),
+            isNull(block.deletedAt),
+          ),
+        )
+        .limit(1)
+
+      if (!metric) throw new Error('Metric not found')
+
+      const content = (metric.content as Record<string, unknown>) || {}
+      
+      // Проверяем что это метрика
+      if (content.metricType !== 'counter' && content.metricType !== 'number') {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              error: 'Not a metric',
+              message: 'This block is not a metric.',
+            }, null, 2),
+          }],
+        }
+      }
+
+      if (content.metricType !== 'number') {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              error: 'Wrong metric type',
+              message: `This metric is "${content.metricType}", not "number". Use incrementMetric for counter metrics.`,
+            }, null, 2),
+          }],
+        }
+      }
+
+      const currentValue = (content.currentValue as number) || 0
+      const delta = value - currentValue
+      const history = (content.history as Array<Record<string, unknown>>) || []
+
+      const newEntry = {
+        value,
+        timestamp: new Date().toISOString(),
+        delta,
+        ...(note && { note }),
+      }
+
+      const updatedContent = {
+        ...content,
+        currentValue: value,
+        history: [...history, newEntry],
+      }
+
+      await db
+        .update(block)
+        .set({
+          content: updatedContent,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(block.id, metricId))
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            data: {
+              metricId,
+              title: metric.title,
+              previousValue: currentValue,
+              newValue: value,
+              delta,
+              unit: content.unit,
+            },
+            message: `${metric.title}: ${currentValue} → ${value}${content.unit ? ' ' + content.unit : ''} (${delta >= 0 ? '+' : ''}${delta})`,
+          }, null, 2),
+        }],
+      }
+    },
+  )
+
+  // ============================================================================
+  // getMetricHistory — получить историю метрики
+  // ============================================================================
+  server.tool(
+    'getMetricHistory',
+    'Get history of a metric with statistics. Use to analyze trends and progress.',
+    {
+      metricId: z.string().describe('Metric ID'),
+      days: z.number().min(1).max(365).optional().describe('Number of days to get history for (default: 30)'),
+    },
+    async ({ metricId, days = 30 }) => {
+      const userId = getUserId()
+      if (!userId) throw new Error('User not authenticated')
+
+      console.log(`📈 getMetricHistory: metric=${metricId?.slice(0, 8)}, days=${days}, user=${userId?.slice(0, 8)}`)
+
+      const [metric] = await db
+        .select()
+        .from(block)
+        .where(
+          and(
+            eq(block.id, metricId),
+            eq(block.userId, userId),
+            isNull(block.deletedAt),
+          ),
+        )
+        .limit(1)
+
+      if (!metric) throw new Error('Metric not found')
+
+      const content = (metric.content as Record<string, unknown>) || {}
+      
+      // Проверяем что это метрика
+      if (content.metricType !== 'counter' && content.metricType !== 'number') {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              error: 'Not a metric',
+              message: 'This block is not a metric.',
+            }, null, 2),
+          }],
+        }
+      }
+
+      const allHistory = (content.history as Array<{ value: number; timestamp: string; delta?: number; note?: string }>) || []
+
+      // Фильтруем по дням
+      const cutoffDate = new Date()
+      cutoffDate.setDate(cutoffDate.getDate() - days)
+
+      const history = allHistory.filter(h => new Date(h.timestamp) >= cutoffDate)
+
+      // Считаем статистику
+      let stats = {
+        min: 0,
+        max: 0,
+        avg: 0,
+        totalDelta: 0,
+        entriesCount: history.length,
+      }
+
+      if (history.length > 0) {
+        const values = history.map(h => h.value)
+        stats.min = Math.min(...values)
+        stats.max = Math.max(...values)
+        stats.avg = Math.round((values.reduce((a, b) => a + b, 0) / values.length) * 100) / 100
+        
+        // Общее изменение = последнее значение - первое значение за период
+        if (history.length >= 2) {
+          stats.totalDelta = history[history.length - 1].value - history[0].value
+        }
+      }
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            data: {
+              metric: {
+                id: metric.id,
+                title: metric.title,
+                metricType: content.metricType,
+                currentValue: content.currentValue,
+                unit: content.unit,
+                goal: content.goal,
+              },
+              history: history.slice(-50), // Последние 50 записей
+              stats,
+              period: `${days} days`,
+            },
+            message: `History for "${metric.title}": ${history.length} entries over ${days} days`,
+          }, null, 2),
+        }],
+      }
+    },
+  )
 }

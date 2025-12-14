@@ -48,7 +48,8 @@ async function readTodos(input: ReadTodosInput) {
     
     const { showAll = false, showCompleted = false } = input
     
-    console.log(`📖 readTodos: userId=${userId?.slice(0, 8)}, parentId=${parentId?.slice(0, 8)}, agentId=${agentId?.slice(0, 8)}, showAll=${showAll}, showCompleted=${showCompleted}`)
+    // === VERSION 2.0 - WITH FILTERING ===
+    console.log(`📖 readTodos v2.0: userId=${userId?.slice(0, 8)}, parentId=${parentId?.slice(0, 8)}, agentId=${agentId?.slice(0, 8)}, showAll=${showAll}, showCompleted=${showCompleted}`)
 
     try {
         // Сначала получаем контейнер (todoList) для чтения настроек фокуса
@@ -190,6 +191,7 @@ async function readTodos(input: ReadTodosInput) {
         return {
             success: true,
             operation: 'read',
+            version: '2.0', // Маркер версии для отладки
             data: {
                 todos: formattedTodos,
                 count: formattedTodos.length,

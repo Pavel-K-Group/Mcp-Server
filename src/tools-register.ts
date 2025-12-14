@@ -395,20 +395,103 @@ export function registerTools(server: McpServer) {
   )
 
   // ============================================================================
-  // echo - тестовый инструмент
+  // sendTelegramMessage - отправить сообщение в Telegram
   // ============================================================================
   server.tool(
-    'echo',
-    'Echo back the message. For testing.',
+    'sendTelegramMessage',
+    'Send a message to Telegram. Requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID environment variables.',
     {
-      message: z.string().describe('Message to echo back'),
+      text: z.string().describe('Message text to send'),
     },
-    async ({ message }) => {
-      return {
-        content: [{
-          type: 'text',
-          text: `ECHO v1: ${message}`,
-        }],
+    async ({ text }) => {
+      const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN
+      const telegramChatId = process.env.TELEGRAM_CHAT_ID
+
+      if (!telegramBotToken) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              error: 'TELEGRAM_BOT_TOKEN not configured',
+              message: 'Telegram integration is not configured.',
+            }, null, 2),
+          }],
+        }
+      }
+
+      if (!telegramChatId) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              error: 'TELEGRAM_CHAT_ID not configured',
+              message: 'Telegram integration is not configured.',
+            }, null, 2),
+          }],
+        }
+      }
+
+      if (!text || text.trim() === '') {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              error: 'Empty message',
+              message: 'Message text cannot be empty',
+            }, null, 2),
+          }],
+        }
+      }
+
+      try {
+        const response = await fetch(`https://api.telegram.org/bot${telegramBotToken}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: telegramChatId,
+            text: text,
+            parse_mode: 'HTML',
+          }),
+        })
+
+        if (!response.ok) {
+          const errorData = (await response.json()) as { description?: string }
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                success: false,
+                error: errorData.description || response.statusText,
+                message: `Failed to send: ${errorData.description || response.statusText}`,
+              }, null, 2),
+            }],
+          }
+        }
+
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              success: true,
+              message: 'Message sent to Telegram successfully',
+            }, null, 2),
+          }],
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Network error'
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              error: errorMessage,
+              message: `Failed to send: ${errorMessage}`,
+            }, null, 2),
+          }],
+        }
       }
     },
   )

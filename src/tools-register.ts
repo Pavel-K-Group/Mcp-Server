@@ -501,15 +501,34 @@ export function registerTools(server: McpServer) {
   // ============================================================================
   server.tool(
     'getCompanyMetrics',
-    'Get all metrics for a company. Returns list of metrics with current values and weekly changes.',
-    {
-      companyId: z.string().describe('Company ID'),
-    },
-    async ({ companyId }) => {
+    'Get all metrics for your company. Returns list of metrics with current values and weekly changes.',
+    {},
+    async () => {
       const userId = getUserId()
+      const agentId = getAgentId()
       if (!userId) throw new Error('User not authenticated')
+      if (!agentId) throw new Error('Agent not configured')
 
-      console.log(`📊 getCompanyMetrics: company=${companyId?.slice(0, 8)}, user=${userId?.slice(0, 8)}`)
+      console.log(`📊 getCompanyMetrics: agent=${agentId?.slice(0, 8)}, user=${userId?.slice(0, 8)}`)
+
+      // Получаем агента чтобы найти компанию через parentId
+      const [agent] = await db
+        .select()
+        .from(block)
+        .where(
+          and(
+            eq(block.id, agentId),
+            eq(block.userId, userId),
+            isNull(block.deletedAt),
+          ),
+        )
+        .limit(1)
+
+      if (!agent) throw new Error('Agent not found')
+      
+      // parentId агента — это ID компании
+      const companyId = agent.parentId
+      if (!companyId) throw new Error('Agent not linked to a company')
 
       // Получаем компанию
       const [company] = await db

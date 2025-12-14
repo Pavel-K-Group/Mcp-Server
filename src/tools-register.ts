@@ -16,14 +16,19 @@ export function registerTools(server: McpServer) {
 
   // ============================================================================
   // readTodos - получить задачи агента
+  // По умолчанию: только активные (не completed) задачи
+  // showCompleted: true — только завершённые (для отчёта)
+  // showAll: true — все задачи включая бэклог
   // ============================================================================
   server.tool(
     'readTodos',
-    'Get list of tasks assigned to this agent',
+    'Get your current tasks. Just call without parameters — this returns what you need to work on. Use showCompleted: true only when asked "what did you do?" to report completed work. Use showAll: true only if user explicitly wants to see ALL tasks.',
     {
       limit: z.number().min(1).max(100).optional().describe('Number of tasks (1-100)'),
+      showAll: z.boolean().optional().describe('Show all tasks including backlog. Default: false'),
+      showCompleted: z.boolean().optional().describe('Show ONLY completed tasks (for reporting). Default: false'),
     },
-    async ({ limit }) => {
+    async ({ limit, showAll = false, showCompleted = false }) => {
       const userId = getUserId()
       const parentId = getTodoListId()
       const agentId = getAgentId()
@@ -32,8 +37,27 @@ export function registerTools(server: McpServer) {
       if (!parentId) throw new Error('todoListId not configured')
       if (!agentId) throw new Error('agentId not configured')
 
-      console.log(`📖 readTodos: user=${userId?.slice(0, 8)}, parent=${parentId?.slice(0, 8)}, agent=${agentId?.slice(0, 8)}`)
+      console.log(`📖 readTodos v2: user=${userId?.slice(0, 8)}, parent=${parentId?.slice(0, 8)}, agent=${agentId?.slice(0, 8)}, showAll=${showAll}, showCompleted=${showCompleted}`)
 
+      // Получаем контейнер для настроек фокуса
+      const [container] = await db
+        .select()
+        .from(block)
+        .where(
+          and(
+            eq(block.id, parentId),
+            eq(block.userId, userId),
+            isNull(block.deletedAt),
+          ),
+        )
+        .limit(1)
+
+      const containerContent = (container?.content as Record<string, unknown>) || {}
+      const focusModeEnabled = (containerContent.focusModeEnabled as boolean) ?? false
+      const focusChildOrder = (containerContent.focusChildOrder as string[]) ?? []
+      const backlogChildOrder = (containerContent.backlogChildOrder as string[]) ?? []
+
+      // Получаем все задачи
       const allTodos = await db
         .select()
         .from(block)
@@ -48,12 +72,45 @@ export function registerTools(server: McpServer) {
         .orderBy(asc(block.position), desc(block.createdAt))
 
       // Фильтруем по assigneeId
-      const agentTodos = allTodos.filter((todo) => {
+      let agentTodos = allTodos.filter((todo) => {
         const content = (todo.content as Record<string, unknown>) || {}
         return content.assigneeId === agentId
       })
 
-      const limitedTodos = limit ? agentTodos.slice(0, limit) : agentTodos
+      // Фильтр по статусу выполнения
+      agentTodos = agentTodos.filter((todo) => {
+        const content = (todo.content as Record<string, unknown>) || {}
+        const isCompleted = (content.completed as boolean) || (content.checked as boolean) || false
+        return showCompleted ? isCompleted : !isCompleted
+      })
+
+      // Фильтр по фокусу
+      let filteredTodos = agentTodos
+      let focusInfo = { focusModeEnabled, showingFocusOnly: false, focusCount: 0, backlogCount: 0 }
+
+      if (focusModeEnabled && !showAll) {
+        const focusSet = new Set(focusChildOrder)
+        const backlogSet = new Set(backlogChildOrder)
+        
+        filteredTodos = agentTodos.filter((todo) => {
+          const inFocus = focusSet.has(todo.id)
+          const inBacklog = backlogSet.has(todo.id)
+          return inFocus || (!inFocus && !inBacklog)
+        })
+        
+        focusInfo.showingFocusOnly = true
+        focusInfo.focusCount = filteredTodos.length
+        focusInfo.backlogCount = agentTodos.filter(t => backlogSet.has(t.id)).length
+      }
+
+      // Сортировка по focusChildOrder
+      if (focusModeEnabled) {
+        const orderMap = new Map<string, number>()
+        focusChildOrder.forEach((id, index) => orderMap.set(id, index))
+        filteredTodos.sort((a, b) => (orderMap.get(a.id) ?? Infinity) - (orderMap.get(b.id) ?? Infinity))
+      }
+
+      const limitedTodos = limit ? filteredTodos.slice(0, limit) : filteredTodos
 
       const formattedTodos = limitedTodos.map((todo, index) => {
         const content = (todo.content as Record<string, unknown>) || {}
@@ -61,7 +118,7 @@ export function registerTools(server: McpServer) {
           id: todo.id,
           title: todo.title,
           description: (content.description as string) || '',
-          completed: (content.completed as boolean) || false,
+          completed: (content.completed as boolean) || (content.checked as boolean) || false,
           priority: (content.priority as string) || 'low',
           tags: (todo.tags as string[]) || [],
           createdAt: todo.createdAt,
@@ -70,13 +127,29 @@ export function registerTools(server: McpServer) {
         }
       })
 
+      // Сообщение
+      let message: string
+      if (showCompleted) {
+        message = formattedTodos.length === 0 
+          ? 'No completed tasks yet.' 
+          : `You have completed ${formattedTodos.length} task(s).`
+      } else if (formattedTodos.length === 0) {
+        message = focusInfo.backlogCount > 0 
+          ? `No tasks in focus. ${focusInfo.backlogCount} task(s) in backlog.`
+          : 'No tasks assigned to you.'
+      } else {
+        message = `You have ${formattedTodos.length} task(s) to work on.`
+        if (focusInfo.backlogCount > 0) message += ` (${focusInfo.backlogCount} more in backlog)`
+      }
+
       return {
         content: [{
           type: 'text',
           text: JSON.stringify({
             success: true,
-            data: { todos: formattedTodos, count: formattedTodos.length },
-            message: `Found ${formattedTodos.length} task(s)`,
+            version: '2.0',
+            data: { todos: formattedTodos, count: formattedTodos.length, focusMode: focusInfo },
+            message,
           }, null, 2),
         }],
       }
@@ -317,6 +390,25 @@ export function registerTools(server: McpServer) {
             }, null, 2),
           }],
         }
+      }
+    },
+  )
+
+  // ============================================================================
+  // echo - тестовый инструмент
+  // ============================================================================
+  server.tool(
+    'echo',
+    'Echo back the message. For testing.',
+    {
+      message: z.string().describe('Message to echo back'),
+    },
+    async ({ message }) => {
+      return {
+        content: [{
+          type: 'text',
+          text: `ECHO v1: ${message}`,
+        }],
       }
     },
   )

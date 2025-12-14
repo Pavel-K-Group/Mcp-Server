@@ -22,11 +22,11 @@ export function registerTools(server: McpServer) {
   // ============================================================================
   server.tool(
     'readTodos',
-    'Get your current tasks. Just call without parameters — this returns what you need to work on. Use showCompleted: true only when asked "what did you do?" to report completed work. Use showAll: true only if user explicitly wants to see ALL tasks.',
+    'Get your current tasks. ALWAYS call without parameters. Parameters are only for special cases: showCompleted=true ONLY if user asks "what did you do/complete?", showAll=true ONLY if user says "show ALL tasks" or "show backlog".',
     {
-      limit: z.number().min(1).max(100).optional().describe('Number of tasks (1-100)'),
-      showAll: z.boolean().optional().describe('Show all tasks including backlog. Default: false'),
-      showCompleted: z.boolean().optional().describe('Show ONLY completed tasks (for reporting). Default: false'),
+      limit: z.number().min(1).max(100).optional().describe('Limit results (rarely needed)'),
+      showAll: z.boolean().optional().describe('ONLY if user explicitly asks for ALL tasks or backlog'),
+      showCompleted: z.boolean().optional().describe('ONLY if user asks what you completed/did'),
     },
     async ({ limit, showAll = false, showCompleted = false }) => {
       const userId = getUserId()
